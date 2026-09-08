@@ -4,6 +4,7 @@ package hostinfo
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -11,26 +12,40 @@ import (
 	"time"
 )
 
-// cgroup v2 paths. A unified hierarchy mounts these at the root of the
+// The two trees every figure below is read from.
+//
+// Variables rather than constants so the tests can point them at a fixture and
+// exercise the parsing for a machine they are not running on: a v1 hierarchy, a
+// quota this container does not have, a memory limit that is actually reached.
+// Nothing in the service writes them.
+var (
+	cgroupRoot = "/sys/fs/cgroup"
+	procRoot   = "/proc"
+)
+
+func cgPath(name string) string   { return filepath.Join(cgroupRoot, name) }
+func procPath(name string) string { return filepath.Join(procRoot, name) }
+
+// cgroup v2 names. A unified hierarchy mounts these at the root of the
 // process's own cgroup, so a container reads its own limits without knowing its
 // cgroup name.
 const (
-	cgMemMax     = "/sys/fs/cgroup/memory.max"
-	cgMemCurrent = "/sys/fs/cgroup/memory.current"
-	cgMemStat    = "/sys/fs/cgroup/memory.stat"
-	cgCPUMax     = "/sys/fs/cgroup/cpu.max"
-	cgCPUStat    = "/sys/fs/cgroup/cpu.stat"
+	cgMemMax     = "memory.max"
+	cgMemCurrent = "memory.current"
+	cgMemStat    = "memory.stat"
+	cgCPUMax     = "cpu.max"
+	cgCPUStat    = "cpu.stat"
 )
 
-// cgroup v1 paths, for older hosts. Kubernetes on an older kernel still lands
+// cgroup v1 names, for older hosts. Kubernetes on an older kernel still lands
 // here, so it is worth the twenty lines.
 const (
-	cg1MemLimit  = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
-	cg1MemUsage  = "/sys/fs/cgroup/memory/memory.usage_in_bytes"
-	cg1MemStat   = "/sys/fs/cgroup/memory/memory.stat"
-	cg1CPUQuota  = "/sys/fs/cgroup/cpu/cpu.cfs_quota_us"
-	cg1CPUPeriod = "/sys/fs/cgroup/cpu/cpu.cfs_period_us"
-	cg1CPUUsage  = "/sys/fs/cgroup/cpuacct/cpuacct.usage"
+	cg1MemLimit  = "memory/memory.limit_in_bytes"
+	cg1MemUsage  = "memory/memory.usage_in_bytes"
+	cg1MemStat   = "memory/memory.stat"
+	cg1CPUQuota  = "cpu/cpu.cfs_quota_us"
+	cg1CPUPeriod = "cpu/cpu.cfs_period_us"
+	cg1CPUUsage  = "cpuacct/cpuacct.usage"
 )
 
 // unlimited is what a cgroup writes when no limit is set. v1 writes a number so
@@ -65,7 +80,7 @@ func (r *Reader) read() Stats {
 // caller should read the host instead and say so.
 func cgroupMemory() (used, limit uint64, ok bool) {
 	// v2.
-	if raw, err := os.ReadFile(cgMemMax); err == nil {
+	if raw, err := os.ReadFile(cgPath(cgMemMax)); err == nil {
 		text := strings.TrimSpace(string(raw))
 		if text == "max" {
 			return 0, 0, false
@@ -74,22 +89,22 @@ func cgroupMemory() (used, limit uint64, ok bool) {
 		if err != nil || limit == 0 {
 			return 0, 0, false
 		}
-		current := readUint(cgMemCurrent)
+		current := readUint(cgPath(cgMemCurrent))
 		// memory.current counts the page cache, which the kernel reclaims under
 		// pressure. Reporting it as used shows a healthy container sitting at
 		// 95% forever, which trains everyone to ignore the number. Subtracting
 		// reclaimable file pages is what the OOM killer effectively does.
-		return subtractSaturating(current, readKeyed(cgMemStat, "inactive_file")), limit, true
+		return subtractSaturating(current, readKeyed(cgPath(cgMemStat), "inactive_file")), limit, true
 	}
 
 	// v1.
-	if raw, err := os.ReadFile(cg1MemLimit); err == nil {
+	if raw, err := os.ReadFile(cgPath(cg1MemLimit)); err == nil {
 		limit, err := strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 64)
 		if err != nil || limit == 0 || limit >= unlimitedV1 {
 			return 0, 0, false
 		}
-		current := readUint(cg1MemUsage)
-		return subtractSaturating(current, readKeyed(cg1MemStat, "total_inactive_file")), limit, true
+		current := readUint(cgPath(cg1MemUsage))
+		return subtractSaturating(current, readKeyed(cgPath(cg1MemStat), "total_inactive_file")), limit, true
 	}
 
 	return 0, 0, false
@@ -99,7 +114,7 @@ func cgroupMemory() (used, limit uint64, ok bool) {
 // MemFree excludes the cache the kernel would hand back on demand and makes
 // every healthy Linux box look nearly full.
 func hostMemory() (used, total uint64) {
-	raw, err := os.ReadFile("/proc/meminfo")
+	raw, err := os.ReadFile(procPath("meminfo"))
 	if err != nil {
 		return 0, 0
 	}
@@ -123,7 +138,7 @@ func hostMemory() (used, total uint64) {
 // core count. A pod with "cpu: 500m" gets 0.5, and 100% then means it is
 // throttled rather than that the node is busy.
 func availableCores() float64 {
-	if raw, err := os.ReadFile(cgCPUMax); err == nil {
+	if raw, err := os.ReadFile(cgPath(cgCPUMax)); err == nil {
 		fields := strings.Fields(string(raw))
 		if len(fields) == 2 && fields[0] != "max" {
 			quota, err1 := strconv.ParseFloat(fields[0], 64)
@@ -133,8 +148,8 @@ func availableCores() float64 {
 			}
 		}
 	}
-	if quota := readInt(cg1CPUQuota); quota > 0 {
-		if period := readInt(cg1CPUPeriod); period > 0 {
+	if quota := readInt(cgPath(cg1CPUQuota)); quota > 0 {
+		if period := readInt(cgPath(cg1CPUPeriod)); period > 0 {
 			return float64(quota) / float64(period)
 		}
 	}
@@ -176,7 +191,7 @@ func sampleCPU(cores float64) cpuSample {
 	now := time.Now()
 
 	// v2: usage_usec is this cgroup's cumulative CPU time.
-	if usec := readKeyed(cgCPUStat, "usage_usec"); usec > 0 && cores > 0 {
+	if usec := readKeyed(cgPath(cgCPUStat), "usage_usec"); usec > 0 && cores > 0 {
 		return cpuSample{
 			busy: float64(usec) / 1e6,
 			// The denominator is wall time times the cores available, so the
@@ -187,7 +202,7 @@ func sampleCPU(cores float64) cpuSample {
 		}
 	}
 	// v1: nanoseconds.
-	if ns := readUint(cg1CPUUsage); ns > 0 && cores > 0 {
+	if ns := readUint(cgPath(cg1CPUUsage)); ns > 0 && cores > 0 {
 		return cpuSample{
 			busy:  float64(ns) / 1e9,
 			total: float64(now.UnixNano()) / 1e9 * cores,
@@ -197,7 +212,7 @@ func sampleCPU(cores float64) cpuSample {
 	}
 
 	// The host. /proc/stat's first line is cumulative jiffies across all cores.
-	raw, err := os.ReadFile("/proc/stat")
+	raw, err := os.ReadFile(procPath("stat"))
 	if err != nil {
 		return cpuSample{}
 	}
@@ -241,7 +256,7 @@ func diskUsage(path string) (used, total uint64) {
 }
 
 func loadAverage() (one, five, fifteen float64) {
-	raw, err := os.ReadFile("/proc/loadavg")
+	raw, err := os.ReadFile(procPath("loadavg"))
 	if err != nil {
 		return 0, 0, 0
 	}
@@ -256,7 +271,7 @@ func loadAverage() (one, five, fifteen float64) {
 }
 
 func uptime() int64 {
-	raw, err := os.ReadFile("/proc/uptime")
+	raw, err := os.ReadFile(procPath("uptime"))
 	if err != nil {
 		return 0
 	}

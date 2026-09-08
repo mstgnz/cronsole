@@ -73,6 +73,28 @@ func newHarness(t *testing.T) *harness {
 // no account exists and the setup gate is open. Only the setup tests want it.
 func newFreshHarness(t *testing.T) *harness {
 	t.Helper()
+	return newHarnessWith(t, nil)
+}
+
+// repoSet is the storage the services are built over. It exists so a test can
+// replace one repository before the stack is assembled, which is the only way
+// to make a query fail: memrepo answers everything.
+// The field types are the ones the SERVICES ask for, which for jobs and stats
+// are wider than the domain repository: the service layer owns those.
+type repoSet struct {
+	users         domain.UserRepository
+	projects      domain.ProjectRepository
+	jobs          service.JobStore
+	runs          domain.RunRepository
+	notifications domain.NotificationRepository
+	stats         service.StatsStore
+	hosts         domain.HostOverrideRepository
+	logs          domain.AppLogRepository
+}
+
+// newHarnessWith builds the stack, letting swap replace repositories first.
+func newHarnessWith(t *testing.T, swap func(*repoSet)) *harness {
+	t.Helper()
 
 	h := &harness{
 		t:      t,
@@ -105,24 +127,33 @@ func newFreshHarness(t *testing.T) *harness {
 	}
 
 	policy := service.TargetPolicy{AllowPrivate: true}
-	users := memrepo.Users{Store: h.store}
-	projects := memrepo.Projects{Store: h.store}
-	jobs := memrepo.Jobs{Store: h.store}
-	runs := memrepo.Runs{Store: h.store}
+	set := repoSet{
+		users:         memrepo.Users{Store: h.store},
+		projects:      memrepo.Projects{Store: h.store},
+		jobs:          memrepo.Jobs{Store: h.store},
+		runs:          memrepo.Runs{Store: h.store},
+		notifications: memrepo.Notifications{Store: h.store},
+		stats:         memrepo.Stats{Store: h.store},
+		hosts:         memrepo.Hosts{Store: h.store},
+		logs:          memrepo.Logs{Store: h.store},
+	}
+	if swap != nil {
+		swap(&set)
+	}
 
-	authService := service.NewAuthService(users, h.issuer, h.grants, logger)
-	memberService := service.NewMemberService(authzService, users)
-	notificationService := service.NewNotificationService(memrepo.Notifications{Store: h.store})
-	projectService := service.NewProjectService(projects, jobs, policy)
-	jobService := service.NewJobService(jobs, projects, runs, policy, time.UTC)
-	syncService := service.NewSyncService(jobs, projects, jobService)
-	statsService := service.NewStatsService(memrepo.Stats{Store: h.store}, jobs, jobService)
-	hostService := service.NewHostOverrideService(memrepo.Hosts{Store: h.store}, policy, logger)
+	authService := service.NewAuthService(set.users, h.issuer, h.grants, logger)
+	memberService := service.NewMemberService(authzService, set.users)
+	notificationService := service.NewNotificationService(set.notifications)
+	projectService := service.NewProjectService(set.projects, set.jobs, policy)
+	jobService := service.NewJobService(set.jobs, set.projects, set.runs, policy, time.UTC)
+	syncService := service.NewSyncService(set.jobs, set.projects, jobService)
+	statsService := service.NewStatsService(set.stats, set.jobs, jobService)
+	hostService := service.NewHostOverrideService(set.hosts, policy, logger)
 
 	// Nothing executes. The dispatch hook records the run id so a manual
 	// trigger can be asserted without a worker pool or an HTTP target.
 	dispatch := func(runID int64, _ string) { h.dispatched = append(h.dispatched, runID) }
-	runService := service.NewRunService(runs, jobs, dispatch)
+	runService := service.NewRunService(set.runs, set.jobs, dispatch)
 
 	// secure=false, because httptest speaks plain HTTP and a Secure cookie
 	// would be discarded before the next request could present it.
@@ -144,7 +175,7 @@ func newFreshHarness(t *testing.T) *harness {
 		Projects: handler.NewProjectHandler(authzService, projectService, memberService,
 			renderer, logger, "https://cron.example.com"),
 		Settings: handler.NewSettingsHandler(authService, notificationService, memberService,
-			hostService, memrepo.Logs{Store: h.store}, renderer, logger),
+			hostService, set.logs, renderer, logger),
 		API: handler.NewAPIHandler(authzService, jobService, syncService, runService,
 			projectService, statsService, time.UTC, logger),
 		Health: handler.NewHealthHandler(nil, nil, "test"),

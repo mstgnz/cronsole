@@ -285,7 +285,6 @@ func (r *Renderer) formatTime(v any, layout string) string {
 
 // ago renders a relative time. The dashboard is read at a glance, and "3
 // minutes ago" answers "is this current" in a way a timestamp does not.
-// ago renders a relative time.
 //
 // The number keeps its unit suffix in every language: "3m" is read the same by
 // a Turkish operator, and translating the units would make the column widths

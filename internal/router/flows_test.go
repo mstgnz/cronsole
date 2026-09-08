@@ -780,6 +780,63 @@ func TestAccountsAreManagedFromSettings(t *testing.T) {
 	}
 }
 
+func TestAnAdministratorEditsAnAccountAndResetsItsPassword(t *testing.T) {
+	h, _, session := console(t)
+
+	h.post("/settings/users", session, url.Values{
+		"fullname": {"Operator"}, "email": {"operator@example.com"},
+		"password": {"the-first-password"}, "active": {"true"},
+	})
+	created := h.store.UserByEmail("operator@example.com")
+	if created == nil {
+		t.Fatal("the account was not created")
+	}
+
+	// The same modal serves the edit, with the id in the path. An empty
+	// password field means "leave it", so the reset has to be asked for.
+	h.post("/settings/users/"+itoa(created.ID), session, url.Values{
+		"fullname": {"Operator Renamed"}, "email": {"operator@example.com"},
+		"password": {"the-replacement-password"}, "active": {"true"},
+	})
+
+	edited := h.store.User(created.ID)
+	if edited == nil {
+		t.Fatal("the account disappeared on edit")
+	}
+	if edited.Fullname != "Operator Renamed" {
+		t.Errorf("name = %q, want the edited one", edited.Fullname)
+	}
+	if !auth.ComparePassword(edited.Password, "the-replacement-password") {
+		t.Error("the password was not reset")
+	}
+	if auth.ComparePassword(edited.Password, "the-first-password") {
+		t.Error("the old password still works after a reset")
+	}
+	// A reset is also a way to end a stolen session, so every token issued
+	// before it has to stop working.
+	if edited.TokensValidAfter == nil {
+		t.Error("a password reset did not retire the sessions issued before it")
+	}
+}
+
+func TestAStaleLinkInSettingsIsNotFound(t *testing.T) {
+	// The screens are full of ids, and an operator with an old tab open is the
+	// normal case. None of these may read as a server fault.
+	h, _, session := console(t)
+
+	for _, path := range []string{
+		"/settings/users/9999/delete",
+		"/settings/users/not-a-number",
+		"/settings/notifications/9999/delete",
+		"/settings/hosts/9999/delete",
+		"/settings/hosts/not-a-number",
+	} {
+		if w := h.post(path, session, nil); w.Code != http.StatusNotFound {
+			t.Errorf("POST %s answered %d, want 404", path, w.Code)
+		}
+	}
+}
+
 func TestAnAccountAddressIsUnique(t *testing.T) {
 	h, _, session := console(t)
 

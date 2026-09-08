@@ -54,10 +54,17 @@ test:
 test-repo: test-db
 	@CRONSOLE_TEST_DB="$(TEST_DB_URL)" go test ./internal/repository/... -count=1
 
-## cover: Run the tests with a coverage summary for the service layer
+## cover: Coverage, measured exactly the way CI measures it
+## cover: Same packages, same flags, same 85% floor. It used to differ and the
+## cover: local figure was the one nobody could reproduce.
 cover:
-	@go test -coverprofile=/tmp/$(APP_NAME).cover ./internal/... ./pkg/... >/dev/null
-	@go tool cover -func=/tmp/$(APP_NAME).cover | tail -n 30
+	@pkgs=$$(go list ./... | grep -v '/internal/repository/memrepo$$' | paste -sd, -); \
+	go test -coverpkg="$$pkgs" -coverprofile=/tmp/$(APP_NAME).cover ./... >/dev/null
+	@go tool cover -func=/tmp/$(APP_NAME).cover | tail -n 25
+	@pct=$$(go tool cover -func=/tmp/$(APP_NAME).cover | awk '/^total:/ {print substr($$3, 1, length($$3)-1)}'); \
+	awk -v p="$$pct" 'BEGIN { exit (p >= 85) ? 0 : 1 }' \
+		&& echo "total $$pct% (floor 85%)" \
+		|| { echo "total $$pct% is BELOW the 85% floor"; exit 1; }
 
 ## lint: Vet and format check
 lint:

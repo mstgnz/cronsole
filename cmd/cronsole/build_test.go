@@ -25,6 +25,40 @@ import (
 // deployment asked for it to be off. The service would start cleanly and be
 // quietly wrong. This is the only test that looks at the real thing.
 
+// sharedTestLock serializes this package against internal/repository, whose
+// tests empty every table between cases while these boot a real application
+// against the same rows.
+//
+// go test runs packages in parallel, so without this the two interleave: the
+// catalogue this build writes gets truncated mid-boot, or the account the
+// setup gate just counted disappears before the request lands. The number is
+// arbitrary; it only has to match the one in internal/repository.
+const sharedTestLock = 0x63726F6E // "cron"
+
+// lockTestDatabase holds that lock for the rest of the test.
+func lockTestDatabase(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	// A dedicated connection: an advisory lock belongs to a session, and a
+	// pooled Exec could take it on one connection and release it on another.
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("could not take a connection for the test lock: %v", err)
+	}
+	if _, err := conn.ExecContext(context.Background(), `SELECT pg_advisory_lock($1)`, sharedTestLock); err != nil {
+		t.Fatalf("could not take the test lock: %v", err)
+	}
+	t.Cleanup(func() {
+		// Released explicitly, because Conn.Close returns the session to the
+		// pool rather than ending it, and the lock would outlive the test.
+		if _, err := conn.ExecContext(context.Background(),
+			`SELECT pg_advisory_unlock($1)`, sharedTestLock); err != nil {
+			t.Errorf("could not release the test lock: %v", err)
+		}
+		_ = conn.Close()
+	})
+}
+
 // buildTestApp assembles the application over the test database.
 func buildTestApp(t *testing.T, adjust func(*config.Config)) (*app, *sql.DB) {
 	t.Helper()
@@ -39,6 +73,7 @@ func buildTestApp(t *testing.T, adjust func(*config.Config)) (*app, *sql.DB) {
 		t.Fatalf("sql.Open = %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	lockTestDatabase(t, db)
 
 	cfg := testConfig(t)
 	cfg.DB = dsnToConfig(t, dsn)

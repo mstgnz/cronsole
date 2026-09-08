@@ -154,6 +154,12 @@ type fakeRunRepo struct {
 	nextChainID int64
 	getErr      error
 	summaryErr  error
+	// The rest of the database's ways of failing. Each one leaves the runner
+	// unable to prove something it is about to rely on, and what it does then
+	// is the difference between a missed run and a duplicated one.
+	runningErr error
+	claimErr   error
+	finishErr  error
 }
 
 func newRunRepo(target *domain.RunTarget) *fakeRunRepo {
@@ -180,6 +186,9 @@ func (f *fakeRunRepo) GetRun(_ context.Context, runID int64) (*domain.RunTarget,
 }
 
 func (f *fakeRunRepo) CountRunningForJob(context.Context, int64, int64) (int, error) {
+	if f.runningErr != nil {
+		return 0, f.runningErr
+	}
 	return f.runningForJob, nil
 }
 
@@ -188,6 +197,9 @@ func (f *fakeRunRepo) CountRunningForJob(context.Context, int64, int64) (int, er
 func (f *fakeRunRepo) ClaimRun(_ context.Context, runID int64, _ string, _ time.Time) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.claimErr != nil {
+		return false, f.claimErr
+	}
 	if f.claimed[runID] {
 		return false, nil
 	}
@@ -198,6 +210,9 @@ func (f *fakeRunRepo) ClaimRun(_ context.Context, runID int64, _ string, _ time.
 func (f *fakeRunRepo) FinishRun(_ context.Context, runID int64, result domain.RunResult) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.finishErr != nil {
+		return f.finishErr
+	}
 	f.results[runID] = result
 	return nil
 }

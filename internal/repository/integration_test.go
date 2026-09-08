@@ -70,6 +70,40 @@ func connect(t *testing.T) *sql.DB {
 	return testDB
 }
 
+// sharedTestLock serializes this package against cmd/cronsole, which boots a
+// real application against the same database while these tests empty it.
+//
+// go test runs packages in parallel, so without this the two interleave and
+// whichever loses sees a database that changed underneath it: a catalogue
+// truncated mid-boot, or an account that vanished between the gate reading it
+// and the request arriving. The number is arbitrary; it only has to match the
+// one in cmd/cronsole/build_test.go.
+const sharedTestLock = 0x63726F6E // "cron"
+
+// lockTestDatabase holds that lock for the rest of the test.
+func lockTestDatabase(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	// A dedicated connection: an advisory lock belongs to a session, and a
+	// pooled Exec could take it on one connection and release it on another.
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("could not take a connection for the test lock: %v", err)
+	}
+	if _, err := conn.ExecContext(context.Background(), `SELECT pg_advisory_lock($1)`, sharedTestLock); err != nil {
+		t.Fatalf("could not take the test lock: %v", err)
+	}
+	t.Cleanup(func() {
+		// Released explicitly, because Conn.Close returns the session to the
+		// pool rather than ending it, and the lock would outlive the test.
+		if _, err := conn.ExecContext(context.Background(),
+			`SELECT pg_advisory_unlock($1)`, sharedTestLock); err != nil {
+			t.Errorf("could not release the test lock: %v", err)
+		}
+		_ = conn.Close()
+	})
+}
+
 // fresh empties every table and returns a store over the pool.
 //
 // TRUNCATE rather than DELETE, and RESTART IDENTITY, so each test sees the same
@@ -79,6 +113,7 @@ func fresh(t *testing.T) *Store {
 	t.Helper()
 
 	db := connect(t)
+	lockTestDatabase(t, db)
 	_, err := db.Exec(`
 		TRUNCATE
 			job_runs, job_links, job_schedules, job_headers, jobs,

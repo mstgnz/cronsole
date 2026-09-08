@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +16,10 @@ import (
 
 	"github.com/mstgnz/cronsole/v2/internal/domain"
 )
+
+// errBroken is the database refusing, whatever the reason. What the runner does
+// then is the subject; which SQLSTATE it was is not.
+var errBroken = errors.New("pq: server closed the connection unexpectedly")
 
 func testTarget(url string) *domain.RunTarget {
 	return &domain.RunTarget{
@@ -267,6 +274,84 @@ func TestSingleRunSkipsInTheRunner(t *testing.T) {
 	}
 	if _, ok := repo.skips[1]; !ok {
 		t.Error("the skip was not recorded on the row")
+	}
+}
+
+func TestARunIsNotExecutedWhenTheDatabaseCannotBeTrusted(t *testing.T) {
+	// Every one of these leaves the runner unable to prove something it is
+	// about to depend on: which job this is, that nothing else holds it, that
+	// nobody else is already running it. Executing anyway is how a job runs
+	// twice, and for anything that writes, twice is the expensive direction.
+	cases := []struct {
+		name   string
+		break_ func(*fakeRunRepo)
+	}{
+		{"the run row cannot be read", func(f *fakeRunRepo) { f.getErr = errBroken }},
+		{"the claim cannot be made", func(f *fakeRunRepo) { f.claimErr = errBroken }},
+		{"the single run check fails", func(f *fakeRunRepo) { f.runningErr = errBroken }},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				calls.Add(1)
+			}))
+			defer server.Close()
+
+			target := testTarget(server.URL)
+			target.SingleRun = true // so the running check is reached at all
+			repo := newRunRepo(target)
+			c.break_(repo)
+
+			_, ran := newTestRunner(repo, nil).Run(context.Background(), 1)
+			if ran {
+				t.Error("Run reported that it ran")
+			}
+			if got := calls.Load(); got != 0 {
+				t.Errorf("the target was called %d times, want none", got)
+			}
+		})
+	}
+}
+
+func TestAResultThatCannotBeWrittenStopsTheChain(t *testing.T) {
+	// A chain built on a result nobody recorded is a silent data fault: the
+	// next job runs, its own row points at a parent that says nothing, and the
+	// screen cannot explain why any of it happened.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+
+	repo := newRunRepo(testTarget(server.URL))
+	repo.chainTargets["success"] = []domain.ChainTarget{{JobID: 20, Code: "next", Active: true}}
+	repo.finishErr = errBroken
+
+	if _, ran := newTestRunner(repo, nil).Run(context.Background(), 1); !ran {
+		t.Fatal("Run reported that it did not run: the request itself succeeded")
+	}
+	if len(repo.chainCreated) != 0 {
+		t.Errorf("%d chain step(s) were queued on an unwritten result", len(repo.chainCreated))
+	}
+	if repo.summaryWrites != 0 {
+		t.Error("the job summary was refreshed from a result that was never written")
+	}
+}
+
+func TestATransportTimeoutIsRecognisedAsOne(t *testing.T) {
+	// Not every timeout arrives as a context deadline. A dial or a TLS
+	// handshake that gives up produces a net.Error instead, and it matters
+	// which one it is read as: a timeout is recorded as a timeout and is not
+	// retried, while a failure is retried and would double the load on a target
+	// that is already struggling.
+	timedOut := &net.DNSError{Err: "i/o timeout", IsTimeout: true}
+	if !isTimeout(timedOut) {
+		t.Error("a net timeout was not recognised")
+	}
+	if !isTimeout(fmt.Errorf("get %q: %w", "http://example.invalid", timedOut)) {
+		t.Error("a wrapped net timeout was not recognised")
+	}
+	if isTimeout(errors.New("connection refused")) {
+		t.Error("an ordinary failure was read as a timeout")
 	}
 }
 

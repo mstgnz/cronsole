@@ -73,11 +73,18 @@ jobs:
 
       - name: Coverage
         run: |
-          # -coverpkg=./... because most of the interface is covered by tests
-          # that live in internal/router and drive the whole stack. Without it
-          # the figure is each package's own tests only, and the handlers read
-          # as untested when they are not.
-          go test -coverpkg=./... -coverprofile=cover.out ./... >/dev/null
+          # -coverpkg over the whole module because most of the interface is
+          # covered by tests that live in internal/router and drive the whole
+          # stack. Without it the figure is each package's own tests only, and
+          # the handlers read as untested when they are not.
+          #
+          # memrepo is left out of the measurement. It is the in-memory stand-in
+          # the tests run against, so it is test scaffolding that happens to
+          # live in a package: counting it makes the figure move for reasons
+          # that have nothing to do with the service being tested, and rewards
+          # exercising a fake over exercising the code that ships.
+          pkgs=$(go list ./... | grep -v '/internal/repository/memrepo$' | paste -sd, -)
+          go test -coverpkg="$pkgs" -coverprofile=cover.out ./... >/dev/null
           pct=$(go tool cover -func=cover.out | awk '/^total:/ {print substr($3, 1, length($3)-1)}')
           echo "coverage: ${pct}%"
           # The floor is a floor, not a target. Below it, the rules are being

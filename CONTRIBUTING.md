@@ -31,10 +31,22 @@ make cover      # coverage, whole project
 
 CI runs the same, plus `go test -race` and `govulncheck`.
 
-**The floor is 85% across the project**, measured with `-coverpkg=./...` because
-most of the interface is covered by tests that live in `internal/router` and
-drive the whole stack. Without that flag the figure is each package's own tests
-only, and the handlers read as untested when they are not.
+**The floor is 85% across the project**, measured with `-coverpkg` over every
+package because most of the interface is covered by tests that live in
+`internal/router` and drive the whole stack. Without that flag the figure is
+each package's own tests only, and the handlers read as untested when they are
+not. `internal/repository/memrepo` is left out of the measurement: it is the
+in-memory stand-in the tests run against, so counting it rewards exercising a
+fake over exercising the code that ships.
+
+`make cover` runs exactly what CI runs. Two things still move the number
+between your machine and the build:
+
+- **The platform.** `internal/hostinfo` compiles a different file on Linux than
+  on macOS, and the Linux one is ten times the size. CI is the figure that
+  counts; if yours is comfortably above the floor and CI is not, that is why.
+- **Go's version.** CI takes it from `go.mod`. A newer toolchain instruments
+  statements slightly differently, so the two totals never match exactly.
 
 `make test-repo` starts its own database on a separate port from `make dev-db`.
 The repository tests empty every table between cases, so pointing them at the
