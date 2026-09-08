@@ -53,6 +53,7 @@ makes a container override work.
 | production with `DB_SSLMODE=disable` on a non-loopback host | the password crosses the network in clear text |
 | production without `WATCHDOG_ALERT_TO` | the watchdog is the only thing that notices the scheduler dying, and with no recipient it notices in silence |
 | production without `MAIL_HOST` and `MAIL_FROM` | same reason: no transport, no alert |
+| `DOCKER_API` that is not an `http://` or `https://` address | a socket path here would be asking for the access [the container panel](#the-container-panel) exists to avoid, and a misspelled address would show as an empty panel, which reads as a host with no containers |
 
 Failing at boot is the point. Each of these is a control whose absence is
 invisible while everything is fine.
@@ -74,6 +75,11 @@ in flight against your services.
 **`OUTBOUND_ALLOW_PRIVATE`** defaults on, because calling internal endpoints
 with no public address is the point. Set it false for a deployment whose jobs
 are all public and the SSRF guard comes back.
+
+**`DOCKER_API`** is empty by default and the container panel does not exist
+until it is set. It takes the address of a read-only Docker API proxy and never
+the socket itself; [the container panel](#the-container-panel) has the reason
+and the four lines that set one up.
 
 **`TRUSTED_PROXY_HEADER`** is empty by default and should stay empty unless
 there really is a proxy in front. It decides which address the rate limiters
@@ -157,6 +163,59 @@ A worked example, jobs that have not succeeded in over a day:
 time() - cronsole_last_success_timestamp_seconds > 86400
 ```
 
+## The container panel
+
+The dashboard already shows the machine, for the administrator only. Set
+`DOCKER_API` and it also shows what is running beside the console: name, image,
+state and Docker's own health, sorted with whatever is broken at the top. Left
+unset, the panel does not exist.
+
+**The address is a proxy, never the socket, and this is the whole point of the
+feature.** Anything that can reach `/var/run/docker.sock` can start a privileged
+container with the host's filesystem mounted, so a web service holding it turns
+any flaw in that service into the machine. Mounting it `:ro` does not help: the
+flag makes the socket file read-only, not the API behind it. Cronsole therefore
+speaks plain HTTP to something else, and that something else holds the socket:
+
+```yaml
+services:
+  dockerproxy:
+    image: tecnativa/docker-socket-proxy
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      # Every API section is revoked by default. This grants the container
+      # list and nothing else: no images, no exec, no volumes, no swarm.
+      - CONTAINERS=1
+```
+
+Then `DOCKER_API=http://dockerproxy:2375` on the Cronsole container, with the
+two on the same Docker network. Do not publish the proxy's port anywhere but
+loopback or that network. Boot is refused if the value is not an `http://` or
+`https://` address, which is what stops `unix:///var/run/docker.sock` being
+tried here.
+
+What this cannot do, by construction: start, stop or restart anything. That
+needs write access to the Docker API, which is exactly what the proxy withholds,
+and adding a button here would mean handing it back.
+
+`DOCKER_LABEL`, e.g. `cronsole.watch=true`, narrows the list to containers
+carrying that label, using Docker's own filter. Empty lists every container on
+the host, which on a shared box means every project's container names are on
+that screen.
+
+Three things worth knowing about the panel:
+
+- It samples every ten seconds in the background. A page request never waits on
+  the Docker API, so a proxy that stops answering slows nothing down.
+- A failed reading is stated on the panel, and the last good list stays on
+  screen with a line saying how old it is. An emptied panel would read as a host
+  with no containers, which is a much calmer fact than "the console cannot see
+  them".
+- It draws at most 25 rows. The sort puts unhealthy and stopped containers
+  first, so the cut can only ever hide ones that are running.
+
 ## Reading a failure
 
 The runs screen is the record. Each row carries the address actually called,
@@ -204,6 +263,14 @@ deletes from them, so zero means forever.
 Password reset links are pruned by the same sweep and have no setting: a spent
 or expired one cannot be used again, and it is a credential hash tied to a
 person, so there is no reason to keep it.
+
+The container's stdout is the one thing the watchdog cannot reach. Docker's
+default `json-file` driver does not rotate, so `make docker-run` passes
+`--log-opt max-size=10m --log-opt max-file=3`; a container started by hand needs
+the same two options, or a `log-opts` default in `/etc/docker/daemon.json`. Both
+apply from the next `docker run` onwards and leave an existing container's log
+file untouched: `docker inspect --format '{{.LogPath}}' cronsole` says where it
+is. Under Kubernetes this is the kubelet's job and there is nothing to set.
 
 ## Forgotten passwords
 

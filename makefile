@@ -118,6 +118,9 @@ test-db-stop:
 docker-build:
 	@docker build --build-arg VERSION=$(VERSION) -t $(APP_NAME) .
 
+# The log options are not optional. Docker's default json-file driver never
+# rotates, and with --restart always the container's stdout fills the disk of
+# the machine it was installed to protect.
 ## docker-run: Run the container image with .env
 docker-run: docker-build docker-stop
 	@docker run -d \
@@ -125,6 +128,8 @@ docker-run: docker-build docker-stop
 		--restart always \
 		--name $(APP_NAME) \
 		-p $(APP_PORT):$(APP_PORT) \
+		--log-opt max-size=10m \
+		--log-opt max-file=3 \
 		$(APP_NAME)
 
 ## docker-stop: Stop and remove the container
