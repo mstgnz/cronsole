@@ -177,24 +177,27 @@ any flaw in that service into the machine. Mounting it `:ro` does not help: the
 flag makes the socket file read-only, not the API behind it. Cronsole therefore
 speaks plain HTTP to something else, and that something else holds the socket:
 
-```yaml
-services:
-  dockerproxy:
-    image: tecnativa/docker-socket-proxy
-    privileged: true
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      # Every API section is revoked by default. This grants the container
-      # list and nothing else: no images, no exec, no volumes, no swarm.
-      - CONTAINERS=1
+```bash
+make docker-proxy                          # holds the socket, grants the list
+# put the line it prints into .env:
+#   DOCKER_API=http://cronsole-dockerproxy:2375
+make docker-run                            # recreate the app on the same network
 ```
 
-Then `DOCKER_API=http://dockerproxy:2375` on the Cronsole container, with the
-two on the same Docker network. Do not publish the proxy's port anywhere but
-loopback or that network. Boot is refused if the value is not an `http://` or
-`https://` address, which is what stops `unix:///var/run/docker.sock` being
-tried here.
+Both containers join `cronsole-net`, and they have to. Docker's **default bridge
+does not resolve container names**, so a `DOCKER_API` naming the proxy would
+never connect there; `make docker-network` creates the network and both targets
+depend on it. Nothing else about the deployment changes, published ports
+included. `NETWORK` and `PROXY_IMAGE` override the defaults.
+
+The proxy's port is not published at all: it is reachable on that network and
+nowhere else. Boot is refused if `DOCKER_API` is not an `http://` or `https://`
+address, which is what stops `unix:///var/run/docker.sock` being tried here.
+
+Two properties of that proxy do the work. Every API section is **revoked by
+default**, so `CONTAINERS=1` grants the container list and nothing else: no
+images, no exec, no volumes, no swarm. And writes are revoked too, so what it
+exposes is `GET` and `HEAD` of that one section.
 
 What this cannot do, by construction: start, stop or restart anything. That
 needs write access to the Docker API, which is exactly what the proxy withholds,

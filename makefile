@@ -5,6 +5,19 @@ APP_PORT ?= 3333
 DEV_DB_PORT ?= 55433
 VERSION := $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 
+# The network the application and the Docker API proxy share.
+#
+# It has to be a network created here rather than the default bridge: the
+# default bridge does not resolve container names, so DOCKER_API pointing at the
+# proxy by name would never connect. Everything else about the container is
+# unchanged, published ports included.
+NETWORK ?= $(APP_NAME)-net
+
+# The read-only Docker API proxy behind the container panel. It holds the
+# socket so this application never has to; see docs/operations.md.
+PROXY_NAME := $(APP_NAME)-dockerproxy
+PROXY_IMAGE ?= tecnativa/docker-socket-proxy:v0.5.0
+
 # The repository tests get their OWN database, on its own port and with a fixed
 # name rather than one derived from APP_NAME. Two reasons: they truncate every
 # table between cases, so pointing them at the development database would delete
@@ -17,7 +30,8 @@ TEST_DB_URL := postgres://cronsole:cronsole@localhost:$(TEST_DB_PORT)/cronsole_t
 .DEFAULT_GOAL := help
 
 .PHONY: help build cli run live test test-repo cover lint dev-db dev-schema dev-stop \
-	test-db test-db-stop docker-build docker-run docker-stop clean-image
+	test-db test-db-stop docker-network docker-build docker-run docker-stop \
+	docker-proxy docker-proxy-stop clean-image
 
 ## help: List the available commands
 help: makefile
@@ -118,15 +132,21 @@ test-db-stop:
 docker-build:
 	@docker build --build-arg VERSION=$(VERSION) -t $(APP_NAME) .
 
+## docker-network: Create the network the application and the proxy share
+docker-network:
+	@docker network inspect $(NETWORK) >/dev/null 2>&1 || docker network create $(NETWORK) >/dev/null
+	@echo "network $(NETWORK) ready"
+
 # The log options are not optional. Docker's default json-file driver never
 # rotates, and with --restart always the container's stdout fills the disk of
 # the machine it was installed to protect.
 ## docker-run: Run the container image with .env
-docker-run: docker-build docker-stop
+docker-run: docker-build docker-stop docker-network
 	@docker run -d \
 		--env-file .env \
 		--restart always \
 		--name $(APP_NAME) \
+		--network $(NETWORK) \
 		-p $(APP_PORT):$(APP_PORT) \
 		--log-opt max-size=10m \
 		--log-opt max-file=3 \
@@ -135,6 +155,30 @@ docker-run: docker-build docker-stop
 ## docker-stop: Stop and remove the container
 docker-stop:
 	@docker rm -f $(APP_NAME) >/dev/null 2>&1 || true
+
+# --privileged is upstream's own instruction: SELinux and AppArmor block the
+# socket connection without it. It grants this container nothing it does not
+# already have, because holding that socket is root on the host either way.
+# Drop it on a host that enforces neither.
+## docker-proxy: Run the read-only Docker API proxy the container panel reads
+## docker-proxy: It holds the socket so Cronsole never does, and exposes GET of the container list alone.
+docker-proxy: docker-network docker-proxy-stop
+	@docker run -d \
+		--name $(PROXY_NAME) \
+		--network $(NETWORK) \
+		--restart always \
+		--privileged \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		-e CONTAINERS=1 \
+		--log-opt max-size=10m \
+		--log-opt max-file=3 \
+		$(PROXY_IMAGE)
+	@echo "proxy running. Put this in .env, then run make docker-run:"
+	@echo "  DOCKER_API=http://$(PROXY_NAME):2375"
+
+## docker-proxy-stop: Stop and remove the Docker API proxy
+docker-proxy-stop:
+	@docker rm -f $(PROXY_NAME) >/dev/null 2>&1 || true
 
 ## clean-image: Remove the built image and dangling layers
 clean-image:
