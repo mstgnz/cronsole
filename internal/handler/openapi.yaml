@@ -1,0 +1,1058 @@
+openapi: 3.1.0
+
+# Hand written, and kept that way on purpose.
+#
+# The previous revision of this service shipped a generated Swagger file that
+# described an API two versions old: generated specs rot silently, because
+# nothing fails when they drift. This one is small enough to read in full, so a
+# route added without a line here is visible in review.
+#
+# It covers /api/v1 only. The screens are not an API and are deliberately absent.
+
+info:
+  title: Cronsole API
+  version: "2.0.0"
+  summary: A central scheduler that calls your services on time.
+  description: |
+    Two audiences, and the difference decides which key you send.
+
+    **A project** authenticates with `X-API-Key` and reaches its own jobs and
+    nothing else. This is the integration path: a project declares its whole
+    schedule from its own deploy pipeline with `POST /sync`, and can trigger and
+    read its own runs.
+
+    **An operator** authenticates with a bearer token from `POST /login` and
+    reaches whatever their roles reach, which for a platform administrator is
+    everything. This is the scripting path.
+
+    ### Responses
+
+    Every response is the same envelope:
+
+    ```json
+    { "status": true, "data": { }, "message": "", "errors": [ ] }
+    ```
+
+    `status` is the plain success flag; `data` carries the payload; `message`
+    carries a human readable error; `errors` is present only on a validation
+    failure and names every field at once.
+
+    ### Language
+
+    **These messages are always English.** The interface is available in English
+    and Turkish, but the language middleware is not mounted on `/api/v1`: an
+    `Accept-Language` header changes nothing here. An error whose wording depends
+    on a request header is one nobody can grep for in a log.
+
+    ### Scoping
+
+    A list returns what the caller may see. A single row outside that set answers
+    `404`, never `403`, because telling somebody a job exists but is not theirs
+    confirms an id, and an id is the only thing needed to probe the rest.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+  contact:
+    name: Source and issues
+    url: https://github.com/mstgnz/cronsole
+
+servers:
+  - url: /api/v1
+    description: This deployment
+
+tags:
+  - name: Project
+    description: |
+      Authenticated with a project API key. Everything here is confined to the
+      key's own project; there is no parameter that widens it.
+  - name: Operator
+    description: |
+      Authenticated with a session bearer token, under `/api/v1/admin`. Narrowed
+      to the projects the account's roles reach.
+  - name: Auth
+    description: Obtaining an operator token.
+  - name: Service
+    description: Liveness, readiness and metrics. No credential.
+
+security:
+  - projectKey: []
+
+paths:
+  /login:
+    post:
+      tags: [Auth]
+      summary: Issue an operator token
+      description: |
+        JSON only. Rate limited to ten attempts per five minutes per client
+        address, and a wrong address is indistinguishable from a wrong password:
+        telling them apart turns this into an account enumerator.
+
+        The token is valid for 24 hours, sets no cookie, and is retired early by
+        that account logging out or changing its password.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+            example:
+              email: ops@example.com
+              password: "a long passphrase"
+      responses:
+        "200":
+          description: A token
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          token: { type: string }
+                          expires_in: { type: integer, description: Seconds. }
+                          user: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /sync:
+    post:
+      tags: [Project]
+      summary: Register this project's whole schedule
+      description: |
+        The endpoint that makes a central scheduler workable. A project keeps its
+        cron definitions in its own repository, next to the code that answers
+        them, and posts them on deploy. Without it the schedule lives here and
+        the handler lives there, and the two drift until somebody notices a job
+        calling a route that was deleted last quarter.
+
+        **Idempotent.** Sending the same payload twice changes nothing the second
+        time.
+
+        **An omitted field keeps the stored value**, so a timeout raised on the
+        screen survives the next deploy. That is why `active`, `single_run` and
+        `run_missed` are nullable booleans: `false` and "not mentioned" are
+        different instructions.
+
+        **`prune` deactivates, never deletes.** A partial payload posted by
+        accident costs a switch rather than a definition.
+
+        **A partial failure answers `207`.** One job failing does not stop the
+        rest: twelve declared with one bad expression registers eleven and names
+        the one it refused. A `200` would let a deploy pipeline read "eleven of
+        twelve registered" as a clean run, so check the status, not just the exit
+        code of curl.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SyncRequest" }
+            example:
+              prune: true
+              jobs:
+                - code: daily-report
+                  name: Daily report
+                  url: /cron/daily-report
+                  schedules: ["0 3 * * *"]
+                  timeout_sec: 120
+                  active: true
+                  links:
+                    - target: cleanup
+                      condition: success
+                      delay_sec: 30
+                - code: cleanup
+                  name: Temporary file cleanup
+                  url: /cron/cleanup
+                  schedules: []
+      responses:
+        "200":
+          description: Every declared job was applied
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/SyncResult" }
+        "207":
+          description: |
+            Applied with failures. `data.failed` is above zero and the offending
+            jobs carry `action: failed` with their reasons.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/SyncResult" }
+        "400":
+          description: The body could not be read, or declared no jobs and did not prune
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+
+  /jobs:
+    get:
+      tags: [Project]
+      summary: This project's jobs
+      responses:
+        "200":
+          description: The job list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          total: { type: integer }
+                          jobs:
+                            type: array
+                            items: { $ref: "#/components/schemas/JobRow" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /jobs/{code}/run:
+    post:
+      tags: [Project]
+      summary: Run one of this project's jobs now
+      description: |
+        Addressed **by code, not by id**. A code is what the calling project
+        knows about itself, and it also means the lookup is naturally scoped to
+        the project rather than scoped by a check somebody could forget to write.
+
+        It queues a row and hands it over; it does not execute anything inline.
+        Both halves matter: the row means the request is durable and appears in
+        the history like any other run, and the hand-off means it obeys the same
+        single-run rule and concurrency cap as a scheduled one.
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+          example: daily-report
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          run_id: { type: integer, format: int64 }
+                          job_id: { type: integer, format: int64 }
+                          code: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: No job with that code in this project
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+
+  /runs:
+    get:
+      tags: [Project]
+      summary: This project's run history
+      description: Defaults to the last 24 hours when no `from` is given.
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/RunStatus" } }
+        - { name: from, in: query, schema: { type: string, format: date }, description: Inclusive. }
+        - { name: to, in: query, schema: { type: string, format: date }, description: Inclusive. }
+        - { name: limit, in: query, schema: { type: integer, default: 100 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        "200":
+          description: The run list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          total: { type: integer }
+                          runs:
+                            type: array
+                            items: { $ref: "#/components/schemas/RunRow" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /admin/me:
+    get:
+      tags: [Operator]
+      summary: The signed in account
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The account
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /admin/summary:
+    get:
+      tags: [Operator]
+      summary: The dashboard figures
+      description: |
+        For an external monitor. Narrowed to the projects this account may see.
+
+        The dispatcher pulse inside it is deliberately **not** scoped: the
+        dispatcher is one process serving every project, so its health is the
+        same fact for everyone, and hiding it would leave a project reader
+        looking at a page of zeros with no way to tell a quiet day from a dead
+        scheduler.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: hours
+          in: query
+          schema: { type: integer, default: 24, minimum: 1, maximum: 168 }
+      responses:
+        "200":
+          description: The figures
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/Dashboard" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /admin/schedule-preview:
+    get:
+      tags: [Operator]
+      summary: Validate a cron expression
+      description: |
+        Returns whether the expression parses, what it means in words, and its
+        next firings. Worth calling before saving one: a job that never runs is
+        the failure nobody notices.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: expression
+          in: query
+          required: true
+          schema: { type: string }
+          example: "*/5 * * * *"
+      responses:
+        "200":
+          description: The verdict
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          valid: { type: boolean }
+                          error: { type: string }
+                          description: { type: string }
+                          next:
+                            type: array
+                            items: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /admin/projects:
+    get:
+      tags: [Operator]
+      summary: The projects this account may see
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: Name or slug. }
+      responses:
+        "200":
+          description: The project list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/ProjectRow" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /admin/jobs:
+    get:
+      tags: [Operator]
+      summary: Jobs across the visible projects
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: project_id, in: query, schema: { type: integer, format: int64 } }
+        - { name: tag, in: query, schema: { type: string } }
+        - { name: active, in: query, schema: { type: boolean } }
+        - { name: q, in: query, schema: { type: string }, description: "Code, name, URL or description." }
+        - { name: limit, in: query, schema: { type: integer, default: 100 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        "200":
+          description: The job list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          total: { type: integer }
+                          jobs:
+                            type: array
+                            items: { $ref: "#/components/schemas/JobRow" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Operator]
+      summary: Create a job
+      description: Requires `jobs.create` on the target project.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JobInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          id: { type: integer, format: int64 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+
+  /admin/jobs/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      tags: [Operator]
+      summary: One job with its schedules, headers and chain
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The job
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/JobDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Operator]
+      summary: Update a job
+      description: |
+        `code` in the body is ignored. History, chain links and alerts are keyed
+        by it, so renaming would orphan the trail that explains what the job did.
+
+        The `project_id` field can move a job between projects, and both ends are
+        checked: the project it is in now and the project it is going to.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JobInput" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+    delete:
+      tags: [Operator]
+      summary: Remove a job definition
+      description: Its run history stays. The rows are the record of what the system did, and they outlive the definition.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Envelope" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/jobs/{id}/run:
+    post:
+      tags: [Operator]
+      summary: Run a job now
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          run_id: { type: integer, format: int64 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/runs:
+    get:
+      tags: [Operator]
+      summary: Runs across the visible jobs
+      description: |
+        Honours the field restriction on `runs.read`. A role that may not see run
+        output gets the rows with `output`, `error` or `request_url` empty rather
+        than being refused the endpoint.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: job_id, in: query, schema: { type: integer, format: int64 } }
+        - { name: project_id, in: query, schema: { type: integer, format: int64 } }
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/RunStatus" } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { name: limit, in: query, schema: { type: integer, default: 100 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        "200":
+          description: The run list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          total: { type: integer }
+                          runs:
+                            type: array
+                            items: { $ref: "#/components/schemas/RunRow" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+components:
+  securitySchemes:
+    projectKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: |
+        A project's key. 24 random bytes, shown once when issued, stored only as
+        a SHA-256 hash and compared in constant time. It reaches that project and
+        nothing else. Rotating it invalidates the previous key immediately.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: An operator token from `POST /login`. Valid 24 hours.
+
+  responses:
+    Unauthorized:
+      description: No credential, or one that does not verify
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Envelope" }
+    Forbidden:
+      description: Authenticated, but not allowed to do this
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Envelope" }
+    NotFound:
+      description: |
+        No such thing, **or not yours**. The two are the same answer on purpose:
+        telling somebody a job exists but belongs to a project they cannot see
+        confirms an id, and an id is the only thing needed to probe the rest.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Envelope" }
+    Conflict:
+      description: It already exists
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Envelope" }
+    UnsupportedMediaType:
+      description: A JSON endpoint received something else
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Envelope" }
+    TooManyRequests:
+      description: Rate limited
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Envelope" }
+    ValidationFailed:
+      description: |
+        Validation failed. `errors` names **every** problem at once, because a
+        form that reports one per submission takes as many round trips as it has
+        mistakes.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Envelope"
+              - type: object
+                properties:
+                  errors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        field: { type: string }
+                        message: { type: string }
+          example:
+            status: false
+            message: "the job could not be saved"
+            errors:
+              - { field: "url", message: "a path needs the project to declare a base address" }
+              - { field: "schedules.0", message: "not a valid cron expression" }
+
+  schemas:
+    Envelope:
+      type: object
+      description: The shape of every response.
+      properties:
+        status: { type: boolean }
+        message: { type: string }
+        data: {}
+        errors: {}
+
+    RunStatus:
+      type: string
+      description: |
+        `timeout` is not `failed`. When the client gives up the target may still
+        be working, so a timeout triggers no chain step and is never retried.
+        `skipped` means it did not run: either the previous run was still going
+        and the job is `single_run`, or a chain step was blocked.
+      enum: [pending, running, success, failed, timeout, skipped]
+
+    RunTrigger:
+      type: string
+      enum: [schedule, manual, chain, api]
+
+    ChainCondition:
+      type: string
+      description: When the linked job should follow.
+      enum: [success, failure, always]
+
+    User:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        fullname: { type: string }
+        email: { type: string, format: email }
+        phone: { type: string }
+        is_admin:
+          type: boolean
+          description: |
+            The platform administrator flag. A break-glass path rather than a
+            role: it bypasses the permission check entirely, so it cannot be
+            revoked by editing role mappings and cannot silently miss a
+            permission added in a later release.
+        active: { type: boolean }
+        last_login: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+
+    Project:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string }
+        slug: { type: string }
+        description: { type: string }
+        base_url:
+          type: string
+          description: |
+            Optional, and the single most useful thing to set. With it every job
+            under the project gives a path only and the host comes from here, so
+            an account that can edit jobs cannot move one to a different host.
+        api_key_prefix:
+          type: string
+          description: The first 8 characters of the key, for recognising it. Never the key.
+        active: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ProjectRow:
+      allOf:
+        - $ref: "#/components/schemas/Project"
+        - type: object
+          properties:
+            job_total: { type: integer }
+            job_active: { type: integer }
+            day_success: { type: integer }
+            day_failed: { type: integer }
+
+    Job:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        project_id: { type: integer, format: int64 }
+        code:
+          type: string
+          description: |
+            Lower case, digits, dash and underscore. Unique inside the project
+            and fixed once created: history, chain links and alerts are keyed by
+            it.
+        name: { type: string }
+        description: { type: string }
+        tag: { type: string }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD] }
+        url:
+          type: string
+          description: A path when the project declares a base address, a full URL otherwise. Only `http` and `https`.
+        body: { type: string }
+        timeout_sec:
+          type: integer
+          description: The client gives up after this. The run is recorded as `timeout`, not `failed`.
+        max_duration_sec:
+          type: integer
+          description: A run still marked running past this is treated as stuck and closed by the watchdog. Must exceed the timeout.
+        retries: { type: integer, description: "Extra attempts after a failure, one second apart. A timeout is never retried." }
+        single_run: { type: boolean, description: A new run is skipped while the previous one is still going. }
+        run_missed: { type: boolean, description: "If the scheduler was down, run the minutes it missed." }
+        max_delay_min: { type: integer, description: How far back a replay reaches. }
+        priority: { type: integer, description: Lower goes first among the jobs falling on the same minute. }
+        success_min: { type: integer }
+        success_max: { type: integer }
+        notification_id: { type: integer, format: int64, nullable: true }
+        active: { type: boolean }
+        last_run_at: { type: string, format: date-time }
+        last_status: { $ref: "#/components/schemas/RunStatus" }
+        last_duration_ms: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    JobRow:
+      allOf:
+        - $ref: "#/components/schemas/Job"
+        - type: object
+          properties:
+            project_name: { type: string }
+            project_slug: { type: string }
+            schedules: { type: array, items: { type: string } }
+            next_run: { type: string, format: date-time, nullable: true }
+            day_success: { type: integer }
+            day_failed: { type: integer }
+            day_timeout:
+              type: integer
+              description: Part of `day_failed`, counted separately because a timeout and a failure need opposite fixes.
+            link_count: { type: integer }
+            trigger_count: { type: integer }
+
+    JobDetail:
+      type: object
+      properties:
+        job: { $ref: "#/components/schemas/Job" }
+        schedules: { type: array, items: { $ref: "#/components/schemas/Schedule" } }
+        headers: { type: array, items: { $ref: "#/components/schemas/Header" } }
+        links:
+          type: array
+          description: What this job triggers when it finishes.
+          items: { $ref: "#/components/schemas/ChainLink" }
+        triggers:
+          type: array
+          description: What triggers this job.
+          items: { $ref: "#/components/schemas/ChainLink" }
+        next_runs: { type: array, items: { type: string, format: date-time } }
+        resolved_url: { type: string, description: "The address this job actually calls, after the project's base address is applied." }
+
+    Schedule:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        job_id: { type: integer, format: int64 }
+        expression: { type: string, example: "0 3 * * *" }
+        description: { type: string, description: The expression in words. }
+        next_run: { type: string, format: date-time }
+        active: { type: boolean }
+
+    Header:
+      type: object
+      properties:
+        key: { type: string }
+        value:
+          type: string
+          description: |
+            Stored as written. `is_secret` masks it on screen and in responses;
+            it is not encryption. Prefer a token your target can rotate.
+        is_secret: { type: boolean }
+
+    ChainLink:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        job_id: { type: integer, format: int64 }
+        target_job_id: { type: integer, format: int64 }
+        target_code: { type: string }
+        source_code: { type: string }
+        condition: { $ref: "#/components/schemas/ChainCondition" }
+        delay_sec:
+          type: integer
+          description: |
+            The delay exists because the triggering job's writes may not be
+            committed the instant its response returns.
+        active: { type: boolean }
+
+    Run:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        job_id: { type: integer, format: int64 }
+        planned_minute: { type: string, format: date-time, nullable: true }
+        trigger: { $ref: "#/components/schemas/RunTrigger" }
+        parent_run_id: { type: integer, format: int64, nullable: true, description: Set when this run is a chain step. }
+        status: { $ref: "#/components/schemas/RunStatus" }
+        attempt: { type: integer }
+        instance_id: { type: string, description: Which replica claimed it. }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+        duration_ms: { type: integer, nullable: true }
+        http_status:
+          type: integer
+          nullable: true
+          description: Absent when no response arrived at all. "No answer" and "the server said 0" are not the same thing.
+        request_url: { type: string }
+        output: { type: string, description: Up to 16000 characters of the response body. }
+        error: { type: string }
+        created_at: { type: string, format: date-time }
+
+    RunRow:
+      allOf:
+        - $ref: "#/components/schemas/Run"
+        - type: object
+          properties:
+            job_code: { type: string }
+            job_name: { type: string }
+            project_slug: { type: string }
+            project_name: { type: string }
+
+    Dashboard:
+      type: object
+      properties:
+        summary: { $ref: "#/components/schemas/Summary" }
+        activity:
+          type: array
+          description: Per hour counts over the window, oldest first, with empty hours filled in.
+          items:
+            type: object
+            properties:
+              hour: { type: string, format: date-time }
+              success: { type: integer }
+              failed: { type: integer }
+              timeout: { type: integer }
+              skipped: { type: integer }
+        running: { type: array, items: { $ref: "#/components/schemas/RunRow" } }
+        failures: { type: array, items: { $ref: "#/components/schemas/RunRow" } }
+        slowest:
+          type: array
+          items:
+            type: object
+            properties:
+              job_id: { type: integer, format: int64 }
+              code: { type: string }
+              project_slug: { type: string }
+              runs: { type: integer }
+              avg_ms: { type: integer }
+              max_ms: { type: integer }
+        upcoming:
+          type: array
+          items:
+            type: object
+            properties:
+              job_id: { type: integer, format: int64 }
+              code: { type: string }
+              project_slug: { type: string }
+              at: { type: string, format: date-time }
+
+    Summary:
+      type: object
+      properties:
+        last_run: { type: string, format: date-time, nullable: true, description: The dispatcher's last pulse. Absent means it has never run. }
+        elapsed_sec: { type: integer, nullable: true }
+        drift_sec: { type: integer, description: Application clock against the database clock. }
+        instance_id: { type: string }
+        project_total: { type: integer }
+        job_total: { type: integer }
+        job_active: { type: integer }
+        day_total: { type: integer }
+        day_success: { type: integer }
+        day_failed: { type: integer }
+        day_timeout: { type: integer }
+        day_skipped: { type: integer }
+        running: { type: integer }
+        pending: { type: integer }
+        avg_duration_ms: { type: integer }
+
+    JobInput:
+      type: object
+      description: The operator create and update body. Unlike the sync payload, every field is applied as given.
+      required: [project_id, name, url]
+      properties:
+        project_id: { type: integer, format: int64 }
+        code: { type: string, description: "Required on create, ignored on update." }
+        name: { type: string }
+        description: { type: string }
+        tag: { type: string }
+        method: { type: string, default: GET }
+        url: { type: string }
+        body: { type: string }
+        timeout_sec: { type: integer, default: 30 }
+        max_duration_sec: { type: integer, description: Left at zero it is set to ten times the timeout. }
+        retries: { type: integer, default: 0 }
+        single_run: { type: boolean }
+        run_missed: { type: boolean }
+        max_delay_min: { type: integer, default: 10 }
+        priority: { type: integer, default: 100 }
+        success_min: { type: integer, default: 200 }
+        success_max: { type: integer, default: 399 }
+        notification_id: { type: integer, format: int64, nullable: true }
+        active: { type: boolean }
+        schedules:
+          type: array
+          description: Replaces the stored set when present. Five fields, standard cron.
+          items: { type: string }
+        headers:
+          type: array
+          items: { $ref: "#/components/schemas/Header" }
+        links:
+          type: array
+          items: { $ref: "#/components/schemas/ChainIn" }
+
+    ChainIn:
+      type: object
+      description: A chain link, naming its target by code.
+      required: [target]
+      properties:
+        target: { type: string, description: The target job's code. It may live in another project. }
+        condition: { $ref: "#/components/schemas/ChainCondition" }
+        delay_sec: { type: integer, default: 0 }
+
+    SyncRequest:
+      type: object
+      required: [jobs]
+      properties:
+        prune:
+          type: boolean
+          description: Deactivate jobs that exist here but are missing from the payload. Never deletes.
+        jobs:
+          type: array
+          items: { $ref: "#/components/schemas/SyncJob" }
+
+    SyncJob:
+      type: object
+      description: |
+        One declared job. **An omitted field keeps the stored value.** The three
+        nullable booleans are nullable for that reason: `false` and "not
+        mentioned" are different instructions.
+      required: [code, name, url]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        description: { type: string }
+        tag: { type: string }
+        url: { type: string }
+        method: { type: string, default: GET }
+        body: { type: string }
+        schedules:
+          type: array
+          description: An empty array registers a job with no schedule of its own, which runs only when a chain link, the run button or this API triggers it.
+          items: { type: string }
+        headers:
+          type: object
+          additionalProperties: { type: string }
+        timeout_sec: { type: integer }
+        max_duration_sec: { type: integer }
+        retries: { type: integer }
+        single_run: { type: boolean, nullable: true }
+        run_missed: { type: boolean, nullable: true }
+        max_delay_min: { type: integer }
+        priority: { type: integer }
+        success_min: { type: integer }
+        success_max: { type: integer }
+        active: { type: boolean, nullable: true }
+        links:
+          type: array
+          items: { $ref: "#/components/schemas/ChainIn" }
+
+    SyncResult:
+      type: object
+      properties:
+        project: { type: string }
+        created: { type: integer }
+        updated: { type: integer }
+        deactivated: { type: integer }
+        failed: { type: integer }
+        jobs:
+          type: array
+          items: { $ref: "#/components/schemas/SyncOutcome" }
+
+    SyncOutcome:
+      type: object
+      properties:
+        code: { type: string }
+        action: { type: string, enum: [created, updated, deactivated, failed] }
+        job_id: { type: integer, format: int64 }
+        errors: { type: array, items: { type: string } }

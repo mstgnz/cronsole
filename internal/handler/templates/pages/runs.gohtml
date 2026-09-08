@@ -1,0 +1,239 @@
+{{ define "content" }}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <div>
+    <h1 class="h4 mb-1 page-title">{{ t "Runs" }}</h1>
+    <p class="text-body-secondary small mb-0">
+      {{ t "Every execution, with how long it took and what came back. Nothing runs without leaving a row here." }}
+    </p>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body py-3">
+    <form class="row g-2 align-items-end" method="get" action="/runs"
+          hx-get="/runs" hx-target="#runTable" hx-select="#runTable" hx-swap="outerHTML"
+          hx-trigger="submit, change from:select, change from:input[type='date'], keyup changed delay:400ms from:input[name='q']"
+          hx-push-url="true">
+      <div class="col-12 col-md-3">
+        <label class="form-label small">{{ t "Search" }}</label>
+        <input class="form-control form-control-sm" type="search" name="q" placeholder="{{ t "job or error" }}"
+               value="{{ qs .Data.filter "q" }}">
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small">{{ t "Project" }}</label>
+        <select class="form-select form-select-sm" name="project_id">
+          <option value="">{{ t "All" }}</option>
+          {{ $sel := qs .Data.filter "project_id" }}
+          {{ range .Data.projects }}
+          <option value="{{ .ID }}" {{ if eq (printf "%d" .ID) $sel }}selected{{ end }}>{{ .Name }}</option>
+          {{ end }}
+        </select>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small">{{ t "Status" }}</label>
+        <select class="form-select form-select-sm" name="status">
+          <option value="">{{ t "All" }}</option>
+          {{ $ssel := qs .Data.filter "status" }}
+          {{ range .Data.statuses }}
+          <option value="{{ . }}" {{ if eq . $ssel }}selected{{ end }}>{{ t . }}</option>
+          {{ end }}
+        </select>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small">{{ t "Trigger" }}</label>
+        <select class="form-select form-select-sm" name="trigger">
+          <option value="">{{ t "All" }}</option>
+          {{ $tsel := qs .Data.filter "trigger" }}
+          {{ range .Data.triggers }}
+          <option value="{{ . }}" {{ if eq . $tsel }}selected{{ end }}>{{ t . }}</option>
+          {{ end }}
+        </select>
+      </div>
+      <div class="col-6 col-md-1">
+        <label class="form-label small">{{ t "From" }}</label>
+        <input class="form-control form-control-sm" type="date" name="from" value="{{ qs .Data.filter "from" }}">
+      </div>
+      <div class="col-6 col-md-1">
+        <label class="form-label small">{{ t "To" }}</label>
+        <input class="form-control form-control-sm" type="date" name="to" value="{{ qs .Data.filter "to" }}">
+      </div>
+      <div class="col-6 col-md-1 d-grid">
+        <a class="btn btn-sm btn-outline-secondary" href="/runs">{{ t "Reset" }}</a>
+      </div>
+      {{ if qs .Data.filter "job_id" }}
+      <input type="hidden" name="job_id" value="{{ qs .Data.filter "job_id" }}">
+      {{ end }}
+    </form>
+  </div>
+</div>
+
+{{ template "run-table" .Data }}
+
+<div class="modal fade" id="runModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content" id="runModalContent"></div>
+  </div>
+</div>
+{{ end }}
+
+{{ define "run-table" }}
+<div id="runTable">
+  <div class="card">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead>
+          <tr>
+            <th class="ps-3">{{ t "Job" }}</th>
+            <th>{{ t "Planned" }}</th>
+            <th>{{ t "Started" }}</th>
+            <th class="text-end">{{ t "Duration" }}</th>
+            <th class="text-center">HTTP</th>
+            <th class="text-center">{{ t "Status" }}</th>
+            <th>{{ t "Trigger" }}</th>
+            <th class="ps-2">{{ t "Result" }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{ range .runs }}
+          <tr data-status="{{ .Status }}" role="button"
+              hx-get="/runs/{{ .ID }}" hx-target="#runModalContent" hx-swap="innerHTML"
+              onclick="new bootstrap.Modal(document.getElementById('runModal')).show()">
+            <td class="ps-3">
+              <span class="fw-medium">{{ .JobCode }}</span>
+              <span class="badge {{ tint .ProjectSlug }} mt-1">{{ .ProjectSlug }}</span>
+            </td>
+            <td class="small text-nowrap">
+              {{ if .PlannedMinute }}{{ short .PlannedMinute }}{{ else }}<span class="text-body-secondary">&mdash;</span>{{ end }}
+            </td>
+            <td class="small text-nowrap">
+              {{ if .StartedAt }}{{ short .StartedAt }}<div class="text-body-secondary">{{ ago .StartedAt }}</div>
+              {{ else }}<span class="text-body-secondary">{{ t "not started" }}</span>{{ end }}
+            </td>
+            <td class="text-end small text-nowrap">{{ if .DurationMs }}{{ duration .DurationMs }}{{ else }}&mdash;{{ end }}</td>
+            <td class="text-center small">
+              {{ if .HTTPStatus }}{{ deref .HTTPStatus }}{{ else }}<span class="text-body-secondary">&mdash;</span>{{ end }}
+            </td>
+            <td class="text-center">{{ template "status-badge" .Status }}</td>
+            <td class="small text-body-secondary">{{ t .Trigger }}</td>
+            <td class="ps-2 small text-body-secondary text-truncate" style="max-width: 24rem;">
+              {{ if .Error }}<span class="text-danger-emphasis">{{ truncate 140 .Error }}</span>
+              {{ else if .Output }}{{ truncate 140 .Output }}
+              {{ else if not $.view.Output }}<span class="fst-italic">{{ t "hidden" }}</span>{{ end }}
+            </td>
+          </tr>
+          {{ else }}
+          {{ template "empty-row" dict "cols" 8 "message" (t "No run matches this filter.") }}
+          {{ end }}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {{ template "pagination" dict "page" .page "pages" .pages "total" .total "base" "/runs" "query" .query }}
+</div>
+{{ end }}
+
+{{ define "run-detail" }}
+{{ $run := .run }}
+<div class="modal-header">
+  <div>
+    <h5 class="modal-title">{{ $run.JobCode }}</h5>
+    <div class="small text-body-secondary">{{ $run.ProjectName }} &middot; {{ t "run %d" $run.ID }}</div>
+  </div>
+  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+</div>
+<div class="modal-body">
+  <div class="row g-2 mb-3">
+    <div class="col-6 col-md-3">
+      <div class="section-title mb-1">{{ t "Status" }}</div>
+      {{ template "status-badge" $run.Status }}
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="section-title mb-1">{{ t "Duration" }}</div>
+      {{ if $run.DurationMs }}{{ duration $run.DurationMs }}{{ else }}&mdash;{{ end }}
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="section-title mb-1">HTTP</div>
+      {{ if $run.HTTPStatus }}{{ deref $run.HTTPStatus }}{{ else }}&mdash;{{ end }}
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="section-title mb-1">{{ t "Trigger" }}</div>
+      {{ t $run.Trigger }}{{ if $run.Attempt }} <span class="text-body-secondary">{{ t "(attempt %d)" $run.Attempt }}</span>{{ end }}
+    </div>
+  </div>
+
+  <div class="row g-2 mb-3 small">
+    <div class="col-12 col-md-4">
+      <div class="section-title mb-1">{{ t "Planned" }}</div>
+      {{ if $run.PlannedMinute }}{{ datetime $run.PlannedMinute }}{{ else }}{{ t "not scheduled" }}{{ end }}
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="section-title mb-1">{{ t "Started" }}</div>
+      {{ if $run.StartedAt }}{{ datetime $run.StartedAt }}{{ else }}&mdash;{{ end }}
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="section-title mb-1">{{ t "Finished" }}</div>
+      {{ if $run.FinishedAt }}{{ datetime $run.FinishedAt }}{{ else }}&mdash;{{ end }}
+    </div>
+  </div>
+
+  {{ if $run.RequestURL }}
+  <div class="mb-3">
+    <div class="section-title">{{ t "Called" }}</div>
+    <code class="small">{{ $run.RequestURL }}</code>
+  </div>
+  {{ end }}
+
+  {{ if $run.InstanceID }}
+  <div class="mb-3">
+    <div class="section-title">{{ t "Ran on" }}</div>
+    <code class="small">{{ $run.InstanceID }}</code>
+  </div>
+  {{ end }}
+
+  {{ if $run.ParentRunID }}
+  <div class="mb-3">
+    <div class="section-title">{{ t "Triggered by" }}</div>
+    <a href="/runs/{{ deref $run.ParentRunID }}">{{ t "run %d" (deref $run.ParentRunID) }}</a>
+    <span class="text-body-secondary small">{{ t "— this is a chain step" }}</span>
+  </div>
+  {{ end }}
+
+  {{ if $run.Error }}
+  <div class="mb-3">
+    <div class="section-title">{{ t "Error" }}</div>
+    <pre class="output text-danger-emphasis">{{ $run.Error }}</pre>
+  </div>
+  {{ end }}
+
+  {{ if $run.Output }}
+  <div class="mb-3">
+    <div class="section-title">{{ t "Response" }}</div>
+    <pre class="output">{{ $run.Output }}</pre>
+  </div>
+  {{ end }}
+
+  {{ template "run-restricted" $.view }}
+
+  {{ if .children }}
+  <div>
+    <div class="section-title">{{ t "Runs this one triggered" }}</div>
+    <ul class="list-unstyled mb-0 small">
+      {{ range .children }}
+      <li class="mb-1">
+        {{ template "status-badge" .Status }}
+        <a href="/runs/{{ .ID }}" class="ms-1">{{ .JobCode }}</a>
+        <span class="text-body-secondary">
+          {{ if .DurationMs }}&middot; {{ duration .DurationMs }}{{ end }}
+          {{ if .Error }}&middot; {{ truncate 90 .Error }}{{ end }}
+        </span>
+      </li>
+      {{ end }}
+    </ul>
+  </div>
+  {{ end }}
+</div>
+<div class="modal-footer">
+  <a class="btn btn-sm btn-outline-secondary" href="/jobs/{{ $run.JobID }}">{{ t "Open the job" }}</a>
+  <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">{{ t "Close" }}</button>
+</div>
+{{ end }}

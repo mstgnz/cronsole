@@ -1,0 +1,508 @@
+/* Cronsole interface.
+ *
+ * Built on Bootstrap; this file is only what Bootstrap does not give. The
+ * screen is an operations console, so it favours density and legibility at a
+ * glance over decoration: numbers big, chrome quiet, status colour carrying
+ * the meaning.
+ */
+
+:root {
+  --cj-radius: 10px;
+  --cj-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* The page sits a shade below the cards so a card reads as a surface rather
+   * than as four lines drawn on the background. Everything else here is a
+   * consequence of that one decision. */
+  --cj-page: #f4f6fa;
+  --cj-surface: #ffffff;
+  --cj-surface-2: #f8fafc;
+  --cj-header: #f7f9fc;
+  --cj-line: #e3e8ef;
+  --cj-line-soft: #eef2f7;
+
+  /* One accent, used for identity and for "you are here". Status colour stays
+   * the property of status; an interface that spends its palette on decoration
+   * has none left for meaning. */
+  --cj-accent: #3d5afe;
+  --cj-accent-soft: #eef1ff;
+
+  --cj-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --cj-shadow-lift: 0 2px 4px rgba(16, 24, 40, 0.06), 0 8px 20px rgba(16, 24, 40, 0.08);
+}
+
+[data-bs-theme="dark"] {
+  --cj-page: #0d1117;
+  --cj-surface: #161b22;
+  --cj-surface-2: #1c222b;
+  --cj-header: #1a2029;
+  --cj-line: #2a313c;
+  --cj-line-soft: #232a34;
+
+  --cj-accent: #7c8cff;
+  --cj-accent-soft: #1e2440;
+
+  --cj-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --cj-shadow-lift: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
+
+body {
+  font-size: 0.9375rem;
+  background: var(--cj-page);
+}
+
+.font-mono,
+code,
+pre {
+  font-family: var(--cj-mono);
+}
+
+/* Navigation */
+
+.app-nav {
+  background: var(--cj-surface);
+  border-bottom: 1px solid var(--cj-line);
+  box-shadow: var(--cj-shadow);
+  backdrop-filter: saturate(140%) blur(6px);
+}
+
+.navbar-brand {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.navbar-brand .bi {
+  color: var(--cj-accent);
+}
+
+/* The active entry is marked by an underline as well as by weight. Colour
+ * alone is not a marker: it disappears for anyone who does not separate these
+ * two blues, and it competes with the status colours further down the page. */
+.app-nav .nav-link {
+  position: relative;
+  padding-top: 0.6rem;
+  padding-bottom: 0.6rem;
+}
+
+.app-nav .nav-link.active {
+  color: var(--cj-accent);
+  font-weight: 600;
+}
+
+.app-nav .nav-link.active::after {
+  content: "";
+  position: absolute;
+  left: 0.5rem;
+  right: 0.5rem;
+  bottom: 0.1rem;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--cj-accent);
+}
+
+.app-nav .nav-link:hover {
+  color: var(--cj-accent);
+}
+
+.brand-mark {
+  width: 3rem;
+  height: 3rem;
+  border-radius: var(--cj-radius);
+  display: grid;
+  place-items: center;
+  font-size: 1.5rem;
+  background: var(--cj-accent-soft);
+  color: var(--cj-accent);
+}
+
+/* Cards */
+
+.card {
+  border-radius: var(--cj-radius);
+  border-color: var(--cj-line);
+  background: var(--cj-surface);
+  box-shadow: var(--cj-shadow);
+}
+
+.card-header {
+  background: var(--cj-header);
+  border-bottom-color: var(--cj-line);
+  font-weight: 600;
+  font-size: 0.875rem;
+  border-top-left-radius: var(--cj-radius);
+  border-top-right-radius: var(--cj-radius);
+}
+
+.card-footer {
+  background: var(--cj-header);
+  border-top-color: var(--cj-line);
+}
+
+/* Stat cards carry a colour strip down their leading edge. It is the one place
+ * decoration and meaning coincide: the strip is the card's own status, so the
+ * top of the dashboard can be read without reading it. */
+.stat-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.stat-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--cj-accent);
+}
+
+.stat-card.stat-success::before { background: var(--bs-success); }
+.stat-card.stat-danger::before  { background: var(--bs-danger); }
+.stat-card.stat-warning::before { background: var(--bs-warning); }
+.stat-card.stat-muted::before,
+.stat-card.stat-secondary::before { background: var(--cj-line); }
+
+.stat-card .stat-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--bs-secondary-color);
+  margin-bottom: 0.35rem;
+}
+
+.stat-card .stat-value {
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.stat-card .stat-value .unit {
+  font-size: 1rem;
+  font-weight: 400;
+  color: var(--bs-secondary-color);
+}
+
+/* Status colours.
+ *
+ * One definition per status, used by every table, badge and chart legend, so
+ * a colour means the same thing everywhere on the screen. */
+
+.badge.status-success { background: var(--bs-success-bg-subtle); color: var(--bs-success-text-emphasis); }
+.badge.status-danger  { background: var(--bs-danger-bg-subtle);  color: var(--bs-danger-text-emphasis); }
+.badge.status-warning { background: var(--bs-warning-bg-subtle); color: var(--bs-warning-text-emphasis); }
+.badge.status-primary { background: var(--bs-primary-bg-subtle); color: var(--bs-primary-text-emphasis); }
+.badge.status-info    { background: var(--bs-info-bg-subtle);    color: var(--bs-info-text-emphasis); }
+.badge.status-secondary { background: var(--bs-secondary-bg-subtle); color: var(--bs-secondary-color); }
+.badge.status-light   { background: var(--bs-tertiary-bg); color: var(--bs-secondary-color); }
+
+/* Project tints.
+ *
+ * A stable colour per project, derived from its name rather than chosen, so
+ * six brands on one list are told apart without reading. Muted on purpose:
+ * these must not compete with the status colours, which are the ones that mean
+ * something. */
+.badge.tint-0 { background: #e8eefc; color: #1e40af; }
+.badge.tint-1 { background: #e7f6ee; color: #166534; }
+.badge.tint-2 { background: #fdeceb; color: #9f1239; }
+.badge.tint-3 { background: #f3ebfd; color: #6b21a8; }
+.badge.tint-4 { background: #fff2e0; color: #9a3412; }
+.badge.tint-5 { background: #e4f4f7; color: #155e75; }
+.badge.tint-6 { background: #fceef7; color: #9d174d; }
+.badge.tint-7 { background: #eef1f5; color: #334155; }
+
+[data-bs-theme="dark"] .badge.tint-0 { background: #1b2749; color: #a5b8ff; }
+[data-bs-theme="dark"] .badge.tint-1 { background: #16301f; color: #86e0aa; }
+[data-bs-theme="dark"] .badge.tint-2 { background: #3a1a20; color: #ffa2b0; }
+[data-bs-theme="dark"] .badge.tint-3 { background: #2b1c42; color: #d3b3ff; }
+[data-bs-theme="dark"] .badge.tint-4 { background: #3a2415; color: #ffbf87; }
+[data-bs-theme="dark"] .badge.tint-5 { background: #12313a; color: #8fd8e8; }
+[data-bs-theme="dark"] .badge.tint-6 { background: #3a1a2c; color: #ffa6cf; }
+[data-bs-theme="dark"] .badge.tint-7 { background: #232a34; color: #b6c2d1; }
+
+/* Tables */
+
+.table {
+  --bs-table-bg: transparent;
+  --bs-table-hover-bg: var(--cj-accent-soft);
+  --bs-table-border-color: var(--cj-line-soft);
+  margin-bottom: 0;
+}
+
+.table > :not(caption) > * > * {
+  padding: 0.6rem 0.5rem;
+}
+
+.table thead th {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  color: var(--bs-secondary-color);
+  background: var(--cj-surface-2);
+  border-bottom: 1px solid var(--cj-line);
+}
+
+/* The card clips the table, so the last row does not need a rule under it and
+ * the first header cell keeps the card's corner. */
+.card > .table-responsive:last-child,
+.card > .table-responsive:last-child > .table > tbody > tr:last-child > td {
+  border-bottom: 0;
+}
+
+.card > .table-responsive {
+  border-bottom-left-radius: var(--cj-radius);
+  border-bottom-right-radius: var(--cj-radius);
+}
+
+.min-w-0 { min-width: 0; }
+
+.scroll-panel {
+  max-height: 20rem;
+  overflow-y: auto;
+}
+
+/* Forms */
+
+.form-label {
+  font-weight: 500;
+  margin-bottom: 0.25rem;
+}
+
+.form-hint {
+  font-size: 0.8125rem;
+  color: var(--bs-secondary-color);
+  margin-top: 0.25rem;
+  display: block;
+}
+
+/* Inputs read as fields rather than as underlined text: a filled ground, a
+ * quiet border, and a focus ring in the accent so the caret is findable on a
+ * form this long. */
+.form-control,
+.form-select {
+  background-color: var(--cj-surface-2);
+  border-color: var(--cj-line);
+}
+
+.form-control:focus,
+.form-select:focus {
+  background-color: var(--cj-surface);
+  border-color: var(--cj-accent);
+  box-shadow: 0 0 0 3px var(--cj-accent-soft);
+}
+
+.form-check-input:checked {
+  background-color: var(--cj-accent);
+  border-color: var(--cj-accent);
+}
+
+.form-check-input:focus {
+  border-color: var(--cj-accent);
+  box-shadow: 0 0 0 3px var(--cj-accent-soft);
+}
+
+.section-title {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--bs-secondary-color);
+  margin-bottom: 0.75rem;
+}
+
+/* Page heading: the one place a little size is worth spending, because it is
+ * how you know which screen you are on after a redirect. */
+.page-title {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.list-group-item {
+  background: transparent;
+  border-color: var(--cj-line-soft);
+}
+
+/* The schedule editor.
+ *
+ * Rows are added and removed in the browser without a round trip, because a
+ * job commonly needs several expressions and saving between each one is the
+ * friction this screen exists to remove. */
+
+.schedule-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin-bottom: 0.5rem;
+}
+
+.schedule-row input {
+  font-family: var(--cj-mono);
+}
+
+.preview-line {
+  font-size: 0.8125rem;
+  color: var(--bs-secondary-color);
+  min-height: 1.25rem;
+}
+
+.preview-line.invalid {
+  color: var(--bs-danger-text-emphasis);
+}
+
+.preset-chip {
+  font-size: 0.8125rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--bs-border-color);
+  background: transparent;
+  color: var(--bs-body-color);
+  cursor: pointer;
+}
+
+.preset-chip:hover {
+  border-color: var(--bs-primary);
+  color: var(--bs-primary);
+}
+
+/* Row links
+ *
+ * A row whose only target was the link text is a row you have to aim at. The
+ * whole row navigates instead; the inner anchor stays a real link so the
+ * keyboard, middle-click and "copy link address" all still work. */
+
+[data-row-href] {
+  cursor: pointer;
+}
+
+.list-group-item[data-row-href]:hover {
+  background: var(--cj-accent-soft);
+}
+
+/* Once the whole row is the target, the link inside it no longer has to look
+ * like one. Underlining every job code turned each table into a wall of blue;
+ * the row's own hover is what says it is clickable now. */
+[data-row-href] a {
+  color: inherit;
+  text-decoration: none;
+}
+
+[data-row-href]:hover a,
+[data-row-href] a:hover,
+[data-row-href] a:focus-visible {
+  color: var(--cj-accent);
+  text-decoration: underline;
+}
+
+/* Chart.js with maintainAspectRatio:false fills its parent, so the parent is
+ * what has to have a height. Without this the canvas grows to the page. */
+.chart-box {
+  position: relative;
+  height: 11rem;
+}
+
+.chart-box-tall {
+  height: 14rem;
+}
+
+/* Machine usage meters. Thin on purpose: three of them sit in one card and the
+ * card is context for the schedule, not the subject of the page. */
+.usage-bar {
+  height: 0.375rem;
+  background: var(--cj-line-soft);
+}
+
+.usage-bar .progress-bar {
+  background: var(--cj-accent);
+}
+
+.usage-figure {
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.usage-figure .unit {
+  font-size: 0.8125rem;
+  font-weight: 400;
+  color: var(--bs-secondary-color);
+}
+
+/* Trend figures sit above the job chart. Smaller than a stat card: they are
+ * context for the chart, not the headline of a page. */
+.trend-figure {
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.trend-figure .unit {
+  font-size: 0.875rem;
+  font-weight: 400;
+  color: var(--bs-secondary-color);
+}
+
+/* Confirmation dialog */
+
+.modal-content {
+  border-radius: var(--cj-radius);
+  border-color: var(--cj-line);
+  background: var(--cj-surface);
+  box-shadow: var(--cj-shadow-lift);
+}
+
+.modal-header,
+.modal-footer {
+  border-color: var(--cj-line);
+}
+
+.modal-sm-plus {
+  max-width: 26rem;
+}
+
+.confirm-icon {
+  flex: 0 0 auto;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 1.15rem;
+  background: var(--cj-accent-soft);
+  color: var(--cj-accent);
+}
+
+.confirm-icon-danger {
+  background: var(--bs-danger-bg-subtle);
+  color: var(--bs-danger-text-emphasis);
+}
+
+/* Output blocks */
+
+pre.output {
+  background: var(--bs-tertiary-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--cj-radius);
+  padding: 0.75rem;
+  font-size: 0.8125rem;
+  max-height: 26rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+.key-reveal {
+  font-family: var(--cj-mono);
+  font-size: 0.875rem;
+  word-break: break-all;
+}
+
+/* The run list is read by scanning, so the status colour reaches the row edge
+ * rather than living only inside a badge. */
+tr[data-status="failed"]  > td:first-child { box-shadow: inset 3px 0 0 var(--bs-danger); }
+tr[data-status="timeout"] > td:first-child { box-shadow: inset 3px 0 0 var(--bs-warning); }
+tr[data-status="running"] > td:first-child { box-shadow: inset 3px 0 0 var(--bs-primary); }
+tr[data-status="skipped"] > td:first-child { box-shadow: inset 3px 0 0 var(--bs-secondary); }
+
+@media (max-width: 768px) {
+  .stat-card .stat-value { font-size: 1.5rem; }
+}

@@ -1,7 +1,7 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: cronjob-ingress
+  name: cronsole-ingress
   namespace: default
   annotations:
     kubernetes.io/ingress.class: nginx
@@ -11,16 +11,16 @@ metadata:
 spec:
   tls:
     - hosts:
-        - cronjob.example.com
-      secretName: cronjob-tls
+        - cronsole.example.com
+      secretName: cronsole-tls
   rules:
-    - host: cronjob.example.com
+    - host: cronsole.example.com
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: cronjob-service
+                name: cronsole-service
                 port:
                   number: 80

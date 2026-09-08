@@ -1,0 +1,219 @@
+{{ define "content" }}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <div>
+    <h1 class="h4 mb-1 page-title">{{ t "Projects" }}</h1>
+    <p class="text-body-secondary small mb-0">
+      {{ t "Each project owns its jobs and holds one API key, so a project can register its own schedule from a deploy." }}
+    </p>
+  </div>
+  {{ if $.Can "projects.create" }}
+  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#projectModal" onclick="prepareProject()">
+    <i class="bi bi-plus-lg me-1"></i>{{ t "New project" }}
+  </button>
+  {{ end }}
+</div>
+
+{{ if .Data.newKey }}
+<div class="alert alert-success">
+  <div class="fw-semibold mb-1"><i class="bi bi-key me-1"></i>{{ t "API key issued" }}</div>
+  <p class="small mb-2">
+    {{ t "Copy it now. Only a hash is stored, so this is the only time it can be read. If it is lost, rotate the key." }}
+  </p>
+  <div class="d-flex align-items-center gap-2">
+    <code class="key-reveal flex-grow-1">{{ .Data.newKey }}</code>
+    <button class="btn btn-sm btn-outline-success" data-copy="{{ .Data.newKey }}">
+      <i class="bi bi-clipboard"></i> {{ t "Copy" }}
+    </button>
+  </div>
+</div>
+{{ end }}
+
+<div class="row g-3">
+  {{ range .Data.projects }}
+  <div class="col-12 col-lg-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+          <div class="min-w-0">
+            <h2 class="h6 mb-1">
+              {{ .Name }}
+              {{ if not .Active }}<span class="badge status-secondary ms-1">{{ t "inactive" }}</span>{{ end }}
+            </h2>
+            <code class="small text-body-secondary">{{ .Slug }}</code>
+          </div>
+          <div class="btn-group btn-group-sm">
+            {{ if $.Can "members.read" }}
+            <a class="btn btn-outline-secondary" title="{{ t "Members" }}" href="/projects/{{ .ID }}/members">
+              <i class="bi bi-people"></i>
+            </a>
+            {{ end }}
+            {{ if $.Can "projects.update" }}
+            <button class="btn btn-outline-secondary" title="{{ t "Edit" }}"
+                    data-bs-toggle="modal" data-bs-target="#projectModal"
+                    onclick='prepareProject({{ json . }})'><i class="bi bi-pencil"></i></button>
+            {{ end }}
+            {{ if $.Can "projects.rotate_key" }}
+            <button class="btn btn-outline-warning" title="{{ t "Rotate the API key" }}"
+                    hx-post="/projects/{{ .ID }}/rotate-key" hx-swap="none"
+                    hx-confirm="{{ t "Rotate the key for %s? Anything using the current key stops working immediately." .Name }}">
+              <i class="bi bi-key"></i>
+            </button>
+            {{ end }}
+            {{ if $.Can "projects.delete" }}
+            <button class="btn btn-outline-danger" title="{{ t "Delete" }}"
+                    hx-post="/projects/{{ .ID }}/delete" hx-swap="none"
+                    hx-confirm="{{ t "Delete %s? Its jobs are deactivated with it." .Name }}">
+              <i class="bi bi-trash"></i>
+            </button>
+            {{ end }}
+          </div>
+        </div>
+
+        {{ if .Description }}<p class="small text-body-secondary">{{ .Description }}</p>{{ end }}
+
+        <dl class="row small mb-3">
+          <dt class="col-4 text-body-secondary fw-normal">{{ t "Base address" }}</dt>
+          <dd class="col-8">
+            {{ if .BaseURL }}<code>{{ .BaseURL }}</code>
+            {{ else }}<span class="text-body-secondary">{{ t "none, jobs give full addresses" }}</span>{{ end }}
+          </dd>
+          <dt class="col-4 text-body-secondary fw-normal">{{ t "API key" }}</dt>
+          <dd class="col-8">
+            {{ if .KeyPrefix }}<code>{{ .KeyPrefix }}&hellip;</code>
+            {{ else }}<span class="text-warning">{{ t "not issued" }}</span>{{ end }}
+          </dd>
+        </dl>
+
+        <div class="d-flex gap-3 small">
+          <span>{{ t "%d of %d jobs active" .JobActive .JobTotal }}</span>
+          <span class="text-success">{{ t "%d ok" .DaySuccess }}</span>
+          <span class="{{ if .DayFailed }}text-danger{{ else }}text-body-secondary{{ end }}">{{ t "%d failed" .DayFailed }}</span>
+          <a class="ms-auto" href="/jobs?project_id={{ .ID }}">{{ t "Jobs" }} &rarr;</a>
+        </div>
+      </div>
+    </div>
+  </div>
+  {{ else }}
+  <div class="col-12">
+    <div class="card">
+      <div class="card-body text-center py-5">
+        <i class="bi bi-folder-plus fs-1 d-block mb-3 opacity-50"></i>
+        {{ if $.Can "projects.create" }}
+        <p class="text-body-secondary">{{ t "No project yet. A job needs one, so start here." }}</p>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#projectModal" onclick="prepareProject()">
+          {{ t "Create the first project" }}
+        </button>
+        {{ else }}
+        <p class="text-body-secondary mb-0">
+          {{ t "No project has been shared with you yet. An administrator adds you to one from its members screen." }}
+        </p>
+        {{ end }}
+      </div>
+    </div>
+  </div>
+  {{ end }}
+</div>
+
+<div class="card mt-4">
+  <div class="card-header">{{ t "Registering jobs from a project" }}</div>
+  <div class="card-body">
+    <p class="small text-body-secondary">
+      {{ t "A project can declare its whole schedule in one request, so the definitions live in the repository they belong to instead of only here. The call is idempotent: sending the same payload twice changes nothing the second time." }}
+    </p>
+    <pre class="output">curl -X POST {{ .Data.baseURL }}/api/v1/sync \
+  -H 'X-API-Key: cj_...' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "prune": true,
+    "jobs": [
+      {
+        "code": "daily-report",
+        "name": "Daily report",
+        "url": "/cron/daily-report",
+        "schedules": ["0 3 * * *"],
+        "timeout_sec": 120,
+        "active": true,
+        "links": [{ "target": "cleanup", "delay_sec": 30 }]
+      },
+      {
+        "code": "cleanup",
+        "name": "Temporary file cleanup",
+        "url": "/cron/cleanup",
+        "schedules": []
+      }
+    ]
+  }'</pre>
+    <p class="small text-body-secondary mb-0">
+      {{ t "<code>prune</code> deactivates jobs that exist here but are missing from the payload; it never deletes, so a partial payload posted by accident costs a switch rather than a definition. A job with no schedule, like <code>cleanup</code> above, is registered and runs only when something triggers it: a chain link, the run button, or <code>POST /api/v1/jobs/cleanup/run</code> with the same key." }}
+    </p>
+  </div>
+</div>
+
+<div class="modal fade" id="projectModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <form class="modal-content" id="projectForm" hx-post="/projects" hx-swap="none">
+      <div class="modal-header">
+        <h5 class="modal-title" id="projectModalTitle">{{ t "New project" }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" name="id" id="p_id" value="">
+        <div class="mb-3">
+          <label class="form-label" for="p_name">{{ t "Name" }}</label>
+          <input class="form-control" id="p_name" name="name" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="p_slug">{{ t "Slug" }}</label>
+          <input class="form-control font-mono" id="p_slug" name="slug" pattern="[a-z0-9][a-z0-9_\-]{1,63}">
+          <span class="form-hint">{{ t "Left empty it is derived from the name. Used by the sync API." }}</span>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="p_base">{{ t "Base address" }}</label>
+          <input class="form-control font-mono" id="p_base" name="base_url" placeholder="https://service.example.com">
+          <span class="form-hint">
+            {{ t "Optional, and worth setting. With a base address every job under this project gives a path only, so the host cannot be changed by editing a job." }}
+          </span>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="p_desc">{{ t "Description" }}</label>
+          <textarea class="form-control" id="p_desc" name="description" rows="2"></textarea>
+        </div>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch" id="p_active" name="active" value="true" checked>
+          <label class="form-check-label" for="p_active">{{ t "Active" }}</label>
+          <div class="form-hint mt-0">{{ t "An inactive project's jobs are never queued." }}</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{ t "Cancel" }}</button>
+        <button type="submit" class="btn btn-primary">{{ t "Save" }}</button>
+      </div>
+    </form>
+  </div>
+</div>
+{{ end }}
+
+{{ define "scripts" }}
+<script>
+  // One modal serves create and edit. The hidden id is what tells them apart,
+  // so the form action never changes and htmx keeps working on it.
+  function prepareProject(project) {
+    var form = document.getElementById('projectForm');
+    var title = document.getElementById('projectModalTitle');
+    form.reset();
+    if (project) {
+      title.textContent = 'Edit project';
+      document.getElementById('p_id').value = project.id;
+      document.getElementById('p_name').value = project.name || '';
+      document.getElementById('p_slug').value = project.slug || '';
+      document.getElementById('p_base').value = project.base_url || '';
+      document.getElementById('p_desc').value = project.description || '';
+      document.getElementById('p_active').checked = !!project.active;
+    } else {
+      title.textContent = 'New project';
+      document.getElementById('p_id').value = '';
+      document.getElementById('p_active').checked = true;
+    }
+  }
+</script>
+{{ end }}

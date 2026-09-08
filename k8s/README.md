@@ -1,6 +1,6 @@
 # Kubernetes Deployment Guide
 
-This directory contains Kubernetes configuration files for deploying the Cronjob Manager application. This guide will help you understand and deploy the application in a Kubernetes environment.
+This directory contains Kubernetes configuration files for deploying the Cronsole Manager application. This guide will help you understand and deploy the application in a Kubernetes environment.
 
 ## Directory Structure
 
@@ -33,40 +33,71 @@ k8s/
 ## Configuration Files
 
 ### 1. ConfigMap (configmap.yaml)
-Contains non-sensitive configuration data:
-- Application settings
-- Database connection details
-- Redis connection details
-- Timezone settings
+
+Non-sensitive configuration:
+
+- application settings, database connection, timezone
+- scheduler limits and watchdog thresholds
+- `WATCHDOG_ALERT_TO` is **required**: production boot is refused without it,
+  because the watchdog is the only thing that notices the scheduler itself
+  dying, and with no recipient it notices in silence
 
 ### 2. Secret (secret.yaml)
-Contains sensitive information (base64 encoded):
-- Database password
-- Redis password
-- JWT secret
-- SMTP credentials
+
+Sensitive values, as `stringData` so they are edited in plain text:
+
+- `JWT_SECRET` (at least 32 characters, or boot is refused)
+- `DB_PASS`
+- `MAIL_USER` and `MAIL_PASS`
+
+There is no administrator credential in the secret. The first account is
+created through `/setup`, which is the only screen a deployment with no
+accounts serves and which closes for good once one exists. On a cluster that
+means reaching it before the ingress is public, or port-forwarding to a pod and
+completing it there.
+
+The names have to match what `internal/config` reads. They did not before:
+`DB_PASSWORD` and `SMTP_*` were never looked up, so the application connected
+with an empty password and sent no mail, with nothing to say why.
 
 ### 3. Deployment (deployment.yaml)
-Defines how the application should be deployed:
-- 3 replicas for high availability. Every replica runs the scheduler, and duplicate execution is prevented by a lock in the `triggered` table: the replica that claims a schedule runs it, the others skip that tick. All replicas must therefore point at the same database, and the `triggered` table must match the definition in `cronjob.sql`: `schedule_id` as primary key plus the `instance_id` and lease columns. An older installation whose `triggered` table is still a bare `schedule_id` column has to be updated before scaling past one replica.
-- Rolling update strategy
-- Resource limits and requests
-- Health checks (liveness and readiness probes)
-- Environment variables from ConfigMap and Secret
+
+- 3 replicas. **Every replica runs the dispatcher, and that is safe.**
+  Exclusivity comes from two database constraints and from nothing held in a
+  process: `UNIQUE (job_id, planned_minute)` on `job_runs` gives one row per
+  job per minute however many dispatchers reach that minute, and the atomic
+  claim (`UPDATE ... WHERE status = 'pending'`) gives one execution per row.
+  All replicas must point at the same database; nothing else has to be
+  coordinated.
+- Rolling update strategy, resource limits and requests.
+- Probes: `/healthz` touches nothing but the process, so a database hiccup does
+  not restart every pod; `/readyz` checks the database, so a pod that cannot
+  reach it stops taking traffic.
+- `terminationGracePeriodSeconds: 120`, above the application's own 90 second
+  drain. A run cut off mid-flight leaves a row in `running` that nothing closes
+  until the watchdog sweeps, and a job marked `single_run` does not execute
+  again until then.
+- Environment from the ConfigMap and Secret above.
 
 ### 4. Service (service.yaml)
+
 Exposes the application within the cluster:
+
 - ClusterIP type service
 - Port 80 forwarding to container port 8080
 
 ### 5. Ingress (ingress.yaml)
+
 Configures external access:
+
 - SSL/TLS termination
 - Domain configuration
 - Nginx ingress settings
 
 ### 6. HPA (hpa.yaml)
+
 Configures automatic scaling:
+
 - Min 3 replicas
 - Max 10 replicas
 - CPU and Memory based scaling
@@ -76,11 +107,13 @@ Configures automatic scaling:
 The application includes comprehensive monitoring capabilities using Prometheus and Grafana.
 
 ### 1. Create Monitoring Namespace
+
 ```bash
 kubectl create namespace monitoring
 ```
 
 ### 2. Deploy Prometheus
+
 ```bash
 # Deploy Prometheus configurations
 kubectl apply -f k8s/prometheus/
@@ -91,6 +124,7 @@ kubectl get svc -n monitoring prometheus-service
 ```
 
 ### 3. Deploy Grafana
+
 ```bash
 # Deploy Grafana configurations
 kubectl apply -f k8s/grafana/
@@ -119,43 +153,67 @@ kubectl get svc -n monitoring grafana-service
 
 The application exposes the following metrics:
 
-1. **Cronjob Execution Metrics**
-   - `cronjob_execution_total`: Total number of cronjob executions
-   - `cronjob_execution_duration_seconds`: Duration of cronjob executions
-   - `cronjob_last_execution_timestamp`: Timestamp of last execution
-   - `cronjob_errors_total`: Total number of errors
-   - `cronjob_active_jobs`: Number of currently active jobs
-   - `cronjob_scheduler_leader_info`: Information about scheduler leadership
+1. **The dispatcher's own health.** Everything below it describes the past if
+   the dispatcher is dead, which is why it is listed first.
+   - `cronsole_dispatcher_minutes_lost_total`: minutes never processed. **The
+     one to alert on at any increase**; nothing else reports it
+   - `cronsole_dispatcher_last_tick_timestamp_seconds`: when it last ran
+   - `cronsole_dispatcher_tick_duration_seconds`: approaching 60 means ticks
+     are about to overlap
+   - `cronsole_dispatcher_tick_failures_total`, `cronsole_dispatcher_ticks_total`
+   - `cronsole_clock_drift_seconds`: application against database
+
+2. **Executions**, labelled `project` and `job`.
+   - `cronsole_runs_total{status}`: by outcome
+   - `cronsole_run_duration_seconds`: histogram, buckets out to 600s
+   - `cronsole_last_run_timestamp_seconds`, `cronsole_last_success_timestamp_seconds`:
+     the pair is what makes "this job has not succeeded since 03:00" expressible
+   - `cronsole_runs_queued_total`, `cronsole_runs_dispatched_total`,
+     `cronsole_runs_skipped_total`
+
+3. **Capacity.**
+   - `cronsole_queue_depth`, `cronsole_queue_capacity`
+   - `cronsole_quota_exceeded_total`: the concurrency cap refusing work
+   - `cronsole_active_jobs`
+
+There is no leader metric: this service elects no leader. Exclusivity comes
+from a unique index and an atomic claim, so every replica dispatches and none
+of them coordinates.
 
 ### 6. Grafana Dashboards
 
-The default dashboard includes:
-- Cronjob execution statistics
-- Error rates and types
-- Active jobs monitoring
-- Execution duration metrics
-- Leadership status
+`grafana/grafana-datasource.yaml` carries a dashboard whose every panel queries
+a metric this build exports. Panel order follows the reasoning above: dispatcher
+health, then outcomes and duration, then capacity, then the jobs that have
+stopped succeeding.
 
 ### 7. Alerting
 
-Configure alerts in Grafana for:
-- High error rates
-- Long execution durations
-- Job failures
-- Leadership changes
+The full table with the reasoning behind each threshold is in
+[`docs/operations.md`](../docs/operations.md#metrics). The short version:
+
+| alert when                                                       | why                                                    |
+| ---------------------------------------------------------------- | ------------------------------------------------------ |
+| `increase(cronsole_dispatcher_minutes_lost_total[1h]) > 0`       | a minute was never processed, and nothing else says so |
+| `time() - cronsole_dispatcher_last_tick_timestamp_seconds > 300` | nothing is being queued                                |
+| `cronsole_clock_drift_seconds > 30`                              | the minute boundary is what suffers                    |
+| `time() - cronsole_last_success_timestamp_seconds > 86400`       | a job failing quietly, which a run count cannot catch  |
+| `cronsole_queue_depth / cronsole_queue_capacity > 0.8`           | work is about to be refused                            |
 
 ## Deployment Steps
 
 1. **Prepare Docker Image**
+
    ```bash
    # Build the image
-   docker build -t your-registry.com/cronjob:latest .
-   
+   docker build -t your-registry.com/cronsole:latest .
+
    # Push to registry
-   docker push your-registry.com/cronjob:latest
+   docker push your-registry.com/cronsole:latest
    ```
 
 2. **Create Registry Secret**
+
    ```bash
    kubectl create secret docker-registry regcred \
      --docker-server=your-registry.com \
@@ -173,6 +231,7 @@ Configure alerts in Grafana for:
    - Update `ingress.yaml` with your domain
 
 4. **Deploy Applications**
+
    ```bash
    # Apply all configurations
    kubectl apply -f k8s/
@@ -187,46 +246,50 @@ Configure alerts in Grafana for:
    ```
 
 5. **Verify Deployment**
+
    ```bash
    # Check pods status
-   kubectl get pods -l app=cronjob
+   kubectl get pods -l app=cronsole
 
    # Check service
-   kubectl get svc cronjob-service
+   kubectl get svc cronsole-service
 
    # Check ingress
-   kubectl get ingress cronjob-ingress
+   kubectl get ingress cronsole-ingress
 
    # Check HPA
-   kubectl get hpa cronjob-hpa
+   kubectl get hpa cronsole-hpa
    ```
 
 ## Monitoring
 
 1. **View Logs**
+
    ```bash
    # Get pod logs
-   kubectl logs -l app=cronjob
+   kubectl logs -l app=cronsole
 
    # Follow logs from all pods
-   kubectl logs -f -l app=cronjob --all-containers
+   kubectl logs -f -l app=cronsole --all-containers
    ```
 
 2. **Check Resources**
+
    ```bash
    # Get pod details
-   kubectl describe pod -l app=cronjob
+   kubectl describe pod -l app=cronsole
 
    # Check HPA status
-   kubectl describe hpa cronjob-hpa
+   kubectl describe hpa cronsole-hpa
    ```
 
 ## Troubleshooting
 
 1. **Pod Issues**
+
    ```bash
    # Check pod status
-   kubectl get pods -l app=cronjob
+   kubectl get pods -l app=cronsole
 
    # Get pod details
    kubectl describe pod [pod-name]
@@ -236,18 +299,20 @@ Configure alerts in Grafana for:
    ```
 
 2. **Service Issues**
+
    ```bash
    # Check service endpoints
-   kubectl get endpoints cronjob-service
+   kubectl get endpoints cronsole-service
 
    # Test service from another pod
-   kubectl run test-pod --rm -it --image=busybox -- wget -qO- http://cronjob-service
+   kubectl run test-pod --rm -it --image=busybox -- wget -qO- http://cronsole-service
    ```
 
 3. **Ingress Issues**
+
    ```bash
    # Check ingress status
-   kubectl describe ingress cronjob-ingress
+   kubectl describe ingress cronsole-ingress
 
    # Check ingress controller logs
    kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx
@@ -256,9 +321,10 @@ Configure alerts in Grafana for:
 ## Scaling
 
 - **Manual Scaling**
+
   ```bash
   # Scale deployment
-  kubectl scale deployment cronjob-deployment --replicas=5
+  kubectl scale deployment cronsole-deployment --replicas=5
   ```
 
 - **Auto Scaling**
@@ -269,21 +335,23 @@ Configure alerts in Grafana for:
 ## Maintenance
 
 1. **Update Image**
+
    ```bash
    # Update deployment image
-   kubectl set image deployment/cronjob-deployment cronjob=your-registry.com/cronjob:new-tag
+   kubectl set image deployment/cronsole-deployment cronsole=your-registry.com/cronsole:new-tag
    ```
 
 2. **Rolling Restart**
+
    ```bash
    # Restart all pods
-   kubectl rollout restart deployment cronjob-deployment
+   kubectl rollout restart deployment cronsole-deployment
    ```
 
 3. **Backup Configuration**
    ```bash
    # Export all resources
-   kubectl get all -l app=cronjob -o yaml > backup.yaml
+   kubectl get all -l app=cronsole -o yaml > backup.yaml
    ```
 
 ## Security Considerations
@@ -298,8 +366,9 @@ Configure alerts in Grafana for:
 ## Development vs Production
 
 For development environments, consider:
+
 - Reducing replica count
 - Lowering resource limits
 - Disabling HPA
 - Using different ingress settings
-- Setting debug level logs 
+- Setting debug level logs

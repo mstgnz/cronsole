@@ -15,359 +15,195 @@ data:
         editable: false
 
 ---
+# The dashboard.
+#
+# Every panel here queries a metric this build actually exports. The previous
+# version charted cronsole_execution_total, cronsole_resource_saturation and
+# cronsole_retry_total, none of which have ever existed in this service: it
+# rendered six empty panels, which is worse than no dashboard because an empty
+# panel reads as "nothing is happening" rather than "nothing is measured".
+#
+# The panel order follows docs/operations.md: the dispatcher's own health
+# first, because everything below it is a description of the past if the
+# dispatcher is dead.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: grafana-dashboards
   namespace: monitoring
 data:
-  cronjob-dashboard.json: |
+  cronsole-dashboard.json: |
     {
-      "annotations": {
-        "list": []
-      },
+      "annotations": { "list": [] },
       "editable": true,
-      "fiscalYearStartMonth": 0,
-      "graphTooltip": 0,
-      "links": [],
-      "liveNow": false,
+      "graphTooltip": 1,
+      "title": "Cronsole",
+      "uid": "cronsole",
+      "tags": ["cronsole", "scheduler"],
+      "timezone": "browser",
+      "time": { "from": "now-6h", "to": "now" },
+      "refresh": "30s",
+      "schemaVersion": 39,
       "panels": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  }
-                ]
-              }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 0
-          },
           "id": 1,
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "single",
-              "sort": "none"
-            }
-          },
+          "type": "stat",
+          "title": "Minutes lost",
+          "description": "A minute the dispatcher never processed. Nothing else reports this: a repeated minute conflicts on the unique index without an error, and a gap writes nothing at all. Any increase is data loss.",
+          "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
           "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-              },
-              "expr": "sum(cronjob_execution_total) by (job_id, status)",
-              "legendFormat": "{{job_id}} - {{status}}",
-              "refId": "A"
-            }
+            { "expr": "sum(increase(cronsole_dispatcher_minutes_lost_total[1h]))", "legendFormat": "last hour" }
           ],
-          "title": "Job Executions by Status",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
           "fieldConfig": {
             "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "mappings": [],
               "thresholds": {
                 "mode": "absolute",
                 "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "percent"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 0
-          },
-          "id": 2,
-          "options": {
-            "orientation": "auto",
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ],
-              "fields": "",
-              "values": false
-            },
-            "showThresholdLabels": false,
-            "showThresholdMarkers": true
-          },
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-              },
-              "expr": "cronjob_resource_saturation{resource_type=\"cpu\"} * 100",
-              "legendFormat": "CPU Usage",
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-              },
-              "expr": "cronjob_resource_saturation{resource_type=\"memory\"} * 100",
-              "legendFormat": "Memory Usage",
-              "refId": "B"
-            }
-          ],
-          "title": "Resource Usage",
-          "type": "gauge"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  }
-                ]
-              },
-              "unit": "s"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 8
-          },
-          "id": 3,
-          "options": {
-            "legend": {
-              "calcs": ["mean", "max"],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-              },
-              "expr": "rate(cronjob_http_request_duration_seconds_sum[5m]) / rate(cronjob_http_request_duration_seconds_count[5m])",
-              "legendFormat": "{{job_id}} - {{method}}",
-              "refId": "A"
-            }
-          ],
-          "title": "HTTP Request Duration",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "bars",
-                "fillOpacity": 100,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "lineWidth": 0,
-                "scaleDistribution": {
-                  "type": "linear"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 1 }
                 ]
               }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 8
-          },
-          "id": 4,
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "single",
-              "sort": "none"
             }
-          },
+          }
+        },
+        {
+          "id": 2,
+          "type": "stat",
+          "title": "Since last tick",
+          "description": "How long ago the dispatcher last ran. It should tick every minute; more than a few minutes means nothing is being queued.",
+          "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+          "targets": [
+            { "expr": "time() - max(cronsole_dispatcher_last_tick_timestamp_seconds)", "legendFormat": "age" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 120 },
+                  { "color": "red", "value": 300 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": 3,
+          "type": "stat",
+          "title": "Clock drift",
+          "description": "Application clock against the database clock. The dispatcher reads the minute from the database, so drift is what makes a minute boundary land on the wrong side.",
+          "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+          "targets": [
+            { "expr": "max(cronsole_clock_drift_seconds)", "legendFormat": "drift" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 30 },
+                  { "color": "red", "value": 60 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": 4,
+          "type": "stat",
+          "title": "Active jobs",
+          "description": "Jobs switched on. A sudden drop is somebody deactivating in bulk, or a sync with prune against a short payload.",
+          "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+          "targets": [
+            { "expr": "max(cronsole_active_jobs)", "legendFormat": "active" }
+          ]
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "Runs by outcome",
+          "description": "Executions per second by outcome. Timeout is separated from failure on purpose: they need opposite fixes, and merged into one red line you cannot tell which is in front of you.",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+          "targets": [
+            { "expr": "sum(rate(cronsole_runs_total[5m])) by (status)", "legendFormat": "{{status}}" }
+          ],
+          "fieldConfig": {
+            "defaults": { "custom": { "fillOpacity": 20, "stacking": { "mode": "normal" } } },
+            "overrides": [
+              { "matcher": { "id": "byName", "options": "success" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } } ] },
+              { "matcher": { "id": "byName", "options": "failed" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] },
+              { "matcher": { "id": "byName", "options": "timeout" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } } ] },
+              { "matcher": { "id": "byName", "options": "skipped" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "text" } } ] }
+            ]
+          }
+        },
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "Run duration",
+          "description": "The median and the tail. The p95 is the one that matters: an average hides a job that occasionally takes thirty seconds, and the tail is what reaches the timeout first.",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+          "targets": [
+            { "expr": "histogram_quantile(0.50, sum(rate(cronsole_run_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
+            { "expr": "histogram_quantile(0.95, sum(rate(cronsole_run_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" },
+            { "expr": "histogram_quantile(0.99, sum(rate(cronsole_run_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s" } }
+        },
+        {
+          "id": 7,
+          "type": "timeseries",
+          "title": "Queue depth against capacity",
+          "description": "Work waiting for a worker. Approaching capacity means the pool is about to refuse a run, and a refused run is a dropped execution rather than a slow one.",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+          "targets": [
+            { "expr": "max(cronsole_queue_depth)", "legendFormat": "depth" },
+            { "expr": "max(cronsole_queue_capacity)", "legendFormat": "capacity" }
+          ]
+        },
+        {
+          "id": 8,
+          "type": "timeseries",
+          "title": "Dispatcher tick duration",
+          "description": "How long a tick takes. Approaching 60 seconds means ticks are about to overlap, and an overlapping tick is the one measurement that says the scheduler has outgrown its minute.",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+          "targets": [
+            { "expr": "histogram_quantile(0.95, sum(rate(cronsole_dispatcher_tick_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" },
+            { "expr": "histogram_quantile(1.00, sum(rate(cronsole_dispatcher_tick_duration_seconds_bucket[5m])) by (le))", "legendFormat": "max" }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s" } }
+        },
+        {
+          "id": 9,
+          "type": "table",
+          "title": "Jobs that have not succeeded in over a day",
+          "description": "The panel that catches a job failing quietly. A run count alone cannot say this: a job that has been failing every minute for a week has a healthy looking run rate.",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
           "targets": [
             {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-              },
-              "expr": "sum(increase(cronjob_retry_total[5m])) by (job_id)",
-              "legendFormat": "{{job_id}}",
-              "refId": "A"
+              "expr": "topk(20, time() - cronsole_last_success_timestamp_seconds > 86400)",
+              "legendFormat": "{{project}} / {{job}}",
+              "instant": true,
+              "format": "table"
             }
           ],
-          "title": "Retry Count (5m)",
-          "type": "timeseries"
+          "fieldConfig": { "defaults": { "unit": "s" } }
+        },
+        {
+          "id": 10,
+          "type": "timeseries",
+          "title": "Skipped and refused",
+          "description": "A skipped run is single_run doing its job, or a chain step blocked. A quota refusal is the concurrency cap being the bottleneck rather than your targets.",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+          "targets": [
+            { "expr": "sum(rate(cronsole_runs_skipped_total[5m]))", "legendFormat": "skipped" },
+            { "expr": "sum(rate(cronsole_quota_exceeded_total[5m]))", "legendFormat": "refused by the cap" },
+            { "expr": "sum(rate(cronsole_dispatcher_tick_failures_total[5m]))", "legendFormat": "tick failures" }
+          ]
         }
-      ],
-      "refresh": "10s",
-      "schemaVersion": 39,
-      "tags": [],
-      "templating": {
-        "list": []
-      },
-      "time": {
-        "from": "now-1h",
-        "to": "now"
-      },
-      "timepicker": {},
-      "timezone": "",
-      "title": "Cronjob Metrics",
-      "version": 1,
-      "weekStart": ""
+      ]
     }

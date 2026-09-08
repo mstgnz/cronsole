@@ -1,0 +1,107 @@
+{{ define "content" }}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <div>
+    <h1 class="h4 mb-1 page-title">{{ .Data.project.Name }} &middot; {{ t "members" }}</h1>
+    <p class="text-body-secondary small mb-0">
+      {{ t "Who may reach this project, and what they may do inside it. Access is per project: somebody added here sees this project's jobs and runs and nothing else." }}
+    </p>
+  </div>
+  <a class="btn btn-outline-secondary" href="/projects"><i class="bi bi-arrow-left me-1"></i>{{ t "Projects" }}</a>
+</div>
+
+{{ template "member-panel" .Data }}
+{{ end }}
+
+{{ define "member-panel" }}
+<div id="member-panel">
+  {{ if .flash }}
+  <div class="alert alert-{{ .flash.Kind }} alert-dismissible">
+    {{ .flash.Message }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+  </div>
+  {{ end }}
+
+  <div class="card mb-4">
+    <div class="card-header">{{ t "Members" }}</div>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead>
+          <tr>
+            <th>{{ t "Person" }}</th>
+            <th>{{ t "Role" }}</th>
+            <th class="text-end"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {{ range .members }}
+          <tr>
+            <td>
+              <div class="fw-semibold">{{ .Fullname }}</div>
+              <div class="small text-body-secondary">{{ .Email }}</div>
+            </td>
+            <td>
+              <span class="badge text-bg-secondary">{{ .RoleName }}</span>
+              {{ if .IsAdmin }}<span class="badge text-bg-warning ms-1">{{ t "platform administrator" }}</span>{{ end }}
+              {{ if not .Active }}<span class="badge status-secondary ms-1">{{ t "disabled" }}</span>{{ end }}
+            </td>
+            <td class="text-end">
+              {{ if .Removable }}
+              <button class="btn btn-sm btn-outline-danger"
+                      hx-post="/projects/{{ $.project.ID }}/members/{{ .UserID }}/{{ .RoleID }}/delete"
+                      hx-target="#member-panel" hx-swap="outerHTML"
+                      hx-confirm="{{ t "Remove %s from %s?" .Fullname $.project.Name }}">
+                <i class="bi bi-x-lg"></i>
+              </button>
+              {{ else }}
+              <span class="small text-body-secondary" title="{{ t "You cannot change this member's access" }}">&mdash;</span>
+              {{ end }}
+            </td>
+          </tr>
+          {{ else }}
+          <tr>
+            <td colspan="3" class="text-center text-body-secondary py-4">
+              {{ t "Nobody has been added to this project yet. Platform administrators reach it regardless." }}
+            </td>
+          </tr>
+          {{ end }}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {{ if .roles }}
+  <div class="card">
+    <div class="card-header">{{ t "Add somebody" }}</div>
+    <div class="card-body">
+      <form class="row g-2 align-items-end"
+            hx-post="/projects/{{ .project.ID }}/members"
+            hx-target="#member-panel" hx-swap="outerHTML">
+        <div class="col-12 col-md-5">
+          <label class="form-label" for="m_email">{{ t "Email address" }}</label>
+          <input class="form-control" type="email" id="m_email" name="email" required
+                 placeholder="colleague@example.com">
+          <span class="form-hint">{{ t "They need an account already. Accounts are created under Settings." }}</span>
+        </div>
+        <div class="col-12 col-md-4">
+          <label class="form-label" for="m_role">{{ t "Role" }}</label>
+          <select class="form-select" id="m_role" name="role">
+            {{ range .roles }}<option value="{{ .Key }}">{{ .Name }}</option>{{ end }}
+          </select>
+        </div>
+        <div class="col-12 col-md-3">
+          <button class="btn btn-primary w-100" type="submit"><i class="bi bi-person-plus me-1"></i>{{ t "Add" }}</button>
+        </div>
+      </form>
+
+      <hr>
+      <dl class="row small mb-0">
+        {{ range .roles }}
+        <dt class="col-12 col-sm-3">{{ .Name }}</dt>
+        <dd class="col-12 col-sm-9 text-body-secondary">{{ .Description }}</dd>
+        {{ end }}
+      </dl>
+    </div>
+  </div>
+  {{ end }}
+</div>
+{{ end }}

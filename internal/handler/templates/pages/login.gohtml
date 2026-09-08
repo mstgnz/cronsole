@@ -1,0 +1,41 @@
+{{ define "content" }}
+<div class="container" style="max-width: 26rem;">
+  <div class="text-center mb-4">
+    <div class="brand-mark mx-auto mb-3"><i class="bi bi-clock-history"></i></div>
+    <h1 class="h4 mb-1">Cronsole</h1>
+    <p class="text-body-secondary small mb-0">{{ t "Scheduled work for every project, in one place." }}</p>
+  </div>
+
+  <div class="card">
+    <div class="card-body p-4">
+      <form method="post" action="/login">
+        <input type="hidden" name="next" value="{{ .Data.next }}">
+        <div class="mb-3">
+          <label class="form-label" for="email">{{ t "Email" }}</label>
+          <input class="form-control" type="email" id="email" name="email" value="{{ .Data.email }}" required autofocus autocomplete="username">
+        </div>
+        <div class="mb-4">
+          <label class="form-label" for="password">{{ t "Password" }}</label>
+          <input class="form-control" type="password" id="password" name="password" required autocomplete="current-password">
+        </div>
+        <button class="btn btn-primary w-100" type="submit">{{ t "Sign in" }}</button>
+      </form>
+    </div>
+  </div>
+
+  {{/* The picker lives in the nav, and the nav only renders for a signed in
+       operator. Somebody who cannot get past this screen is exactly who needs
+       it in their own language, so it appears here too. */}}
+  <div class="text-center mt-3">
+    {{ range languages }}
+    <form method="post" action="/lang" class="d-inline">
+      <input type="hidden" name="lang" value="{{ . }}">
+      <input type="hidden" name="next" value="{{ $.Path }}">
+      <button type="submit" class="btn btn-link btn-sm text-body-secondary{{ if eq (printf "%s" .) lang }} fw-semibold{{ end }}">
+        {{ langName . }}
+      </button>
+    </form>
+    {{ end }}
+  </div>
+</div>
+{{ end }}

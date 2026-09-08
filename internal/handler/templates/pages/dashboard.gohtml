@@ -1,0 +1,237 @@
+{{ define "content" }}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <div>
+    <h1 class="h4 mb-1 page-title">{{ t "Dashboard" }}</h1>
+    <p class="text-body-secondary small mb-0">{{ t "Live state of the scheduler and everything it has run today." }}</p>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <div class="btn-group btn-group-sm" role="group">
+      <a class="btn btn-outline-secondary {{ if eq .Data.hours 6 }}active{{ end }}" href="/?hours=6">6h</a>
+      <a class="btn btn-outline-secondary {{ if eq .Data.hours 24 }}active{{ end }}" href="/?hours=24">24h</a>
+      <a class="btn btn-outline-secondary {{ if eq .Data.hours 72 }}active{{ end }}" href="/?hours=72">3d</a>
+      <a class="btn btn-outline-secondary {{ if eq .Data.hours 168 }}active{{ end }}" href="/?hours=168">7d</a>
+    </div>
+    <span class="small text-body-secondary" id="refreshedAt"></span>
+  </div>
+</div>
+
+{{/* The refresh swaps the body of this div and nothing else.
+     No hx-select: the handler already answers an HTMX request with the
+     dashboard-body fragment alone, which carries no #dashboard wrapper. Asking
+     htmx to select one from that fragment finds nothing, and htmx swaps in what
+     it found, so the panel emptied itself every thirty seconds and read as
+     "nothing is happening" rather than as a fault. */}}
+<div id="dashboard"
+     hx-get="/?hours={{ .Data.hours }}"
+     hx-trigger="every 30s"
+     hx-swap="innerHTML">
+  {{ template "dashboard-body" .Data }}
+</div>
+{{ end }}
+
+{{ define "dashboard-body" }}
+{{ $board := .board }}{{ $s := $board.Summary }}
+
+<div class="row g-3 mb-4">
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="card stat-card stat-{{ healthClass $s.Health }} h-100">
+      <div class="card-body">
+        <div class="stat-label">{{ t "Dispatcher" }}</div>
+        <div class="stat-value">
+          {{ if $s.LastRun }}{{ ago $s.LastRun }}{{ else }}{{ t "never" }}{{ end }}
+        </div>
+        <div class="small text-body-secondary">
+          {{ if eq $s.Health "healthy" }}{{ t "running normally" }}
+          {{ else if eq $s.Health "late" }}{{ t "late; scheduled work may be waiting" }}
+          {{ else if eq $s.Health "down" }}{{ t "not running; nothing is being queued" }}
+          {{ else }}{{ t "no pulse recorded yet" }}{{ end }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="card stat-card {{ if gt $s.DriftSec 30 }}stat-warning{{ else }}stat-muted{{ end }} h-100">
+      <div class="card-body">
+        <div class="stat-label">{{ t "Clock drift" }}</div>
+        <div class="stat-value">{{ $s.DriftSec }}<span class="unit">s</span></div>
+        <div class="small text-body-secondary">{{ t "application against database" }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="card stat-card h-100">
+      <div class="card-body">
+        <div class="stat-label">{{ t "Jobs" }}</div>
+        {{/* accent, not status: how many jobs are on is a fact, not an alarm */}}
+        <div class="stat-value">{{ $s.JobActive }}<span class="unit">/ {{ $s.JobTotal }}</span></div>
+        <div class="small text-body-secondary">{{ t "active across %d project(s)" $s.ProjectTotal }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-xl-3">
+    <div class="card stat-card {{ if $s.DayFailed }}stat-danger{{ else }}stat-success{{ end }} h-100">
+      <div class="card-body">
+        <div class="stat-label">{{ t "Last 24 hours" }}</div>
+        <div class="stat-value">
+          <span class="text-success">{{ $s.DaySuccess }}</span>
+          <span class="unit">/</span>
+          <span class="{{ if $s.DayFailed }}text-danger{{ else }}text-body-secondary{{ end }}">{{ $s.DayFailed }}</span>
+        </div>
+        <div class="small text-body-secondary">
+          {{ t "succeeded / failed" }}
+          {{ if $s.DayTimeout }}<span class="text-warning">&middot; {{ t "%d timeout" $s.DayTimeout }}</span>{{ end }}
+          {{ if $s.DaySkipped }}<span>&middot; {{ t "%d skipped" $s.DaySkipped }}</span>{{ end }}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{{/* Absent for everybody but the platform administrator, and absent on a
+     platform with nothing to read. The handler decides; the template does not
+     get to render an empty version of it. */}}
+{{ with .host }}{{ template "host-panel" . }}{{ end }}
+
+<div class="row g-3 mb-4">
+  <div class="col-12 col-xl-8">
+    <div class="card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>{{ t "Activity" }}</span>
+        <span class="small text-body-secondary">
+          {{ t "average successful run %s" (duration $s.AvgDurationMs) }}
+        </span>
+      </div>
+      <div class="card-body">
+        <div class="chart-box chart-box-tall"><canvas id="activityChart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-xl-4">
+    <div class="card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>{{ t "In flight" }}</span>
+        <span>
+          <span class="badge status-primary">{{ t "%d running" $s.Running }}</span>
+          <span class="badge status-info">{{ t "%d queued" $s.Pending }}</span>
+        </span>
+      </div>
+      <div class="list-group list-group-flush scroll-panel">
+        {{ range $board.Running }}
+        <div class="list-group-item d-flex justify-content-between align-items-center gap-2"
+             data-row-href="/jobs/{{ .JobID }}">
+          <div class="min-w-0">
+            <a class="fw-medium text-truncate d-block" href="/jobs/{{ .JobID }}">{{ .JobCode }}</a>
+            <div class="small text-body-secondary text-truncate">{{ .ProjectSlug }} &middot; {{ .Trigger }}</div>
+          </div>
+          <span class="small text-nowrap text-body-secondary">{{ ago .StartedAt }}</span>
+        </div>
+        {{ else }}
+        <div class="list-group-item text-body-secondary small py-4 text-center">{{ t "Nothing is running right now." }}</div>
+        {{ end }}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-xl-6">
+    <div class="card h-100">
+      <div class="card-header">{{ t "Next up" }}</div>
+      <div class="table-responsive scroll-panel">
+        <table class="table table-sm table-hover mb-0 align-middle">
+          <tbody>
+            {{ range $board.Upcoming }}
+            <tr data-row-href="/jobs/{{ .JobID }}">
+              <td class="ps-3">
+                <a href="/jobs/{{ .JobID }}" class="fw-medium">{{ .Code }}</a>
+                <div class="small text-body-secondary">{{ .ProjectSlug }}</div>
+              </td>
+              <td class="text-end pe-3 text-nowrap">
+                <div>{{ clock .At }}</div>
+                <div class="small text-body-secondary">{{ ago .At }}</div>
+              </td>
+            </tr>
+            {{ else }}
+            {{ template "empty-row" dict "cols" 2 "message" (t "No active job has an upcoming run.") }}
+            {{ end }}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-xl-6">
+    <div class="card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>{{ t "Recent failures" }}</span>
+        <a class="small" href="/runs?status=failed">{{ t "See all" }}</a>
+      </div>
+      <div class="table-responsive scroll-panel">
+        <table class="table table-sm table-hover mb-0 align-middle">
+          <tbody>
+            {{ range $board.Failures }}
+            <tr data-row-href="/runs/{{ .ID }}">
+              <td class="ps-3">
+                <a href="/runs/{{ .ID }}" class="fw-medium">{{ .JobCode }}</a>
+                <div class="small text-body-secondary text-truncate" style="max-width: 28rem;">
+                  {{ if .Error }}{{ truncate 120 .Error }}{{ else }}{{ t "no message" }}{{ end }}
+                </div>
+              </td>
+              <td class="text-end pe-3 text-nowrap">
+                {{ template "status-badge" .Status }}
+                <div class="small text-body-secondary">{{ ago .CreatedAt }}</div>
+              </td>
+            </tr>
+            {{ else }}
+            {{ template "empty-row" dict "cols" 2 "message" (t "No failures recorded.") }}
+            {{ end }}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{{ if $board.Slowest }}
+<div class="card mt-3">
+  <div class="card-header">{{ t "Slowest jobs, last 24 hours" }}</div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0 align-middle">
+      <thead>
+        <tr>
+          <th class="ps-3">{{ t "Job" }}</th><th>{{ t "Project" }}</th><th class="text-end">{{ t "Runs" }}</th>
+          <th class="text-end">{{ t "Average" }}</th><th class="text-end pe-3">{{ t "Slowest" }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range $board.Slowest }}
+        <tr data-row-href="/jobs/{{ .JobID }}">
+          <td class="ps-3"><a href="/jobs/{{ .JobID }}">{{ .Code }}</a></td>
+          <td class="text-body-secondary">{{ .ProjectSlug }}</td>
+          <td class="text-end">{{ .Runs }}</td>
+          <td class="text-end">{{ duration .AvgMs }}</td>
+          <td class="text-end pe-3 text-body-secondary">{{ duration .MaxMs }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{ end }}
+
+<script id="activityData" type="application/json">{{ json $board.Activity }}</script>
+{{ end }}
+
+{{ define "scripts" }}
+<script>
+  /* The first paint is app.js's own boot. This is only the repaint after a
+     refresh, which replaces the canvas node and so needs a new chart on it. */
+  document.body.addEventListener('htmx:afterSwap', function (event) {
+    if (event.target && event.target.id === 'dashboard') { window.renderActivity(); }
+  });
+</script>
+{{ end }}

@@ -1,0 +1,64 @@
+{{/*
+  The first run.
+
+  Reached only while the deployment has no account, and gone the moment it has
+  one. The window it opens is real and the page says so: whoever reaches this
+  URL first becomes the administrator, so it is not a screen to leave sitting on
+  a public address.
+*/}}
+{{ define "content" }}
+<div class="container" style="max-width: 30rem;">
+  <div class="text-center mb-4">
+    <div class="brand-mark mx-auto mb-3"><i class="bi bi-clock-history"></i></div>
+    <h1 class="h4 mb-1">Cronsole</h1>
+    <p class="text-body-secondary small mb-0">{{ t "Nobody has an account here yet. Create the first one." }}</p>
+  </div>
+
+  <div class="alert alert-warning d-flex gap-2 small">
+    <i class="bi bi-shield-exclamation mt-1"></i>
+    <div>{{ t "This account is the platform administrator, and this screen closes for good once it exists. Until then, anybody who can reach this address can claim it, so do this before the deployment is public." }}</div>
+  </div>
+
+  <div class="card">
+    <div class="card-body p-4">
+      <form method="post" action="/setup">
+        <div class="mb-3">
+          <label class="form-label" for="fullname">{{ t "Name" }}</label>
+          <input class="form-control" id="fullname" name="fullname" value="{{ with .Data }}{{ .fullname }}{{ end }}"
+                 required autofocus autocomplete="name">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="email">{{ t "Email" }}</label>
+          <input class="form-control" type="email" id="email" name="email" value="{{ with .Data }}{{ .email }}{{ end }}"
+                 required autocomplete="username">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="password">{{ t "Password" }}</label>
+          <input class="form-control" type="password" id="password" name="password" required autocomplete="new-password">
+          <span class="form-hint">{{ t "At least 10 characters." }}</span>
+        </div>
+        <div class="mb-4">
+          <label class="form-label" for="confirm_password">{{ t "Confirm password" }}</label>
+          <input class="form-control" type="password" id="confirm_password" name="confirm_password"
+                 required autocomplete="new-password">
+        </div>
+        <button class="btn btn-primary w-100" type="submit">{{ t "Create the account and sign in" }}</button>
+      </form>
+    </div>
+  </div>
+
+  {{/* Same reason as the login screen: somebody who cannot get past this is
+       exactly who needs it in their own language. */}}
+  <div class="text-center mt-3">
+    {{ range languages }}
+    <form method="post" action="/lang" class="d-inline">
+      <input type="hidden" name="lang" value="{{ . }}">
+      <input type="hidden" name="next" value="{{ $.Path }}">
+      <button type="submit" class="btn btn-link btn-sm text-body-secondary{{ if eq (printf "%s" .) lang }} fw-semibold{{ end }}">
+        {{ langName . }}
+      </button>
+    </form>
+    {{ end }}
+  </div>
+</div>
+{{ end }}

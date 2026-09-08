@@ -1,28 +1,99 @@
-# This workflow will build a golang project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
-
-name: Go
+name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
+
+permissions:
+  contents: read
 
 jobs:
-
   build:
     runs-on: ubuntu-latest
+
+    # The repository tests run against a real Postgres, because the questions
+    # they ask are the database's: does the scope reach the WHERE clause, does
+    # the unique index refuse the second row, do ten processes claiming one run
+    # leave exactly one winner. A mocked driver would answer none of those.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: cronsole
+          POSTGRES_PASSWORD: cronsole
+          POSTGRES_DB: cronsole_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cronsole"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      CRONSOLE_TEST_DB: postgres://cronsole:cronsole@localhost:5432/cronsole_test?sslmode=disable
+
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.22'
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # Read from go.mod rather than pinned here. The two drifted before:
+          # the workflow said 1.22 while the module required 1.25, so CI could
+          # not have compiled the code it was checking.
+          go-version-file: go.mod
+          cache: true
 
-    - name: Build
-      run: go build -v ./...
+      - name: Format
+        run: |
+          unformatted=$(gofmt -l cmd internal pkg)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed on:"; echo "$unformatted"; exit 1
+          fi
 
-    - name: Test
-      run: go test -v ./...
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Schema
+        run: |
+          PGPASSWORD=cronsole psql -h localhost -U cronsole -d cronsole_test \
+            -v ON_ERROR_STOP=1 -f cronsole.sql >/dev/null
+
+      # -race because the scheduler is concurrent by design: a worker pool, a
+      # dispatcher guarding against overlapping ticks, and chain timers firing
+      # from their own goroutines. A data race there corrupts a run record.
+      - name: Test
+        run: go test -race -timeout 5m ./...
+
+      - name: Coverage
+        run: |
+          # -coverpkg=./... because most of the interface is covered by tests
+          # that live in internal/router and drive the whole stack. Without it
+          # the figure is each package's own tests only, and the handlers read
+          # as untested when they are not.
+          go test -coverpkg=./... -coverprofile=cover.out ./... >/dev/null
+          pct=$(go tool cover -func=cover.out | awk '/^total:/ {print substr($3, 1, length($3)-1)}')
+          echo "coverage: ${pct}%"
+          # The floor is a floor, not a target. Below it, the rules are being
+          # changed without anything checking them.
+          awk -v p="$pct" 'BEGIN { exit (p >= 85) ? 0 : 1 }' || {
+            echo "coverage ${pct}% is below the 85% floor"; exit 1;
+          }
+
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...

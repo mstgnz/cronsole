@@ -1,17 +1,58 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: cronjob-config
+  name: cronsole-config
   namespace: default
 data:
   APP_PORT: "8080"
-  APP_NAME: "Cronjob Manager"
+  APP_NAME: "cronsole"
   APP_ENV: "production"
-  APP_URL: "https://cronjob.example.com"
+  APP_URL: "https://cronsole.example.com"
+
   DB_HOST: "postgres-service"
   DB_PORT: "5432"
-  DB_NAME: "cronjob"
-  DB_USER: "postgres"
-  REDIS_HOST: "redis-service"
-  REDIS_PORT: "6379"
+  DB_NAME: "cronsole"
+  DB_USER: "cron_writer"
+  # The database is reached over the cluster network, not loopback, so the
+  # password would otherwise cross it in clear text. Production refuses
+  # `disable` for a non-loopback host.
+  DB_SSLMODE: "require"
+  # Cron expressions are read against this zone.
+  DB_ZONE: "Europe/Istanbul"
   TZ: "Europe/Istanbul"
+
+  # Every replica runs the dispatcher. That is safe: exclusivity comes from the
+  # unique index on (job_id, planned_minute) and from the atomic claim on
+  # job_runs, not from anything held in a process.
+  SCHEDULER_ENABLED: "true"
+  SCHEDULER_DRY_RUN: "false"
+  # Per replica, so the cluster total is this times the replica count.
+  SCHEDULER_MAX_CONCURRENT: "20"
+  SCHEDULER_QUEUE_SIZE: "512"
+  SCHEDULER_MISS_SCAN_MIN: "60"
+  # /metrics is scraped by k8s/prometheus. It is unauthenticated and names
+  # projects and jobs, so the ingress must not expose it.
+  METRICS_ENABLED: "true"
+
+  WATCHDOG_EVERY_MIN: "5"
+  WATCHDOG_HEARTBEAT_LIMIT_MIN: "5"
+  WATCHDOG_DRIFT_LIMIT_SEC: "30"
+  WATCHDOG_FAILURE_THRESHOLD: "5"
+  WATCHDOG_ALERT_REPEAT_MIN: "60"
+  # REQUIRED: production boot is refused without it. The watchdog is the only
+  # thing that notices the scheduler itself dying, and with no recipient it
+  # notices in silence.
+  WATCHDOG_ALERT_TO: "ops@example.com"
+
+  RUN_RETENTION_DAYS: "90"
+  LOG_RETENTION_DAYS: "90"
+
+  # Job targets are internal cluster services with no public address, which is
+  # the whole point of running this here.
+  OUTBOUND_ALLOW_PRIVATE: "true"
+  OUTBOUND_MAX_BODY_KB: "64"
+
+  MAIL_HOST: "smtp.example.com"
+  MAIL_PORT: "587"
+  MAIL_FROM: "cron@example.com"
+  MAIL_FROM_NAME: "Cronsole"

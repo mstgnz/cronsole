@@ -1,0 +1,456 @@
+{{ define "content" }}
+<div class="mb-4">
+  <h1 class="h4 mb-1 page-title">{{ t "Settings" }}</h1>
+  <p class="text-body-secondary small mb-0">{{ t "Accounts, alert recipients and the service's own log." }}</p>
+</div>
+
+<ul class="nav nav-tabs mb-3" role="tablist">
+  <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-users">{{ t "Accounts" }}</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-roles">{{ t "Roles" }}</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-notify">{{ t "Notifications" }}</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-hosts">{{ t "Network" }}</button></li>
+  <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-logs">{{ t "Log" }}</button></li>
+</ul>
+
+<div class="tab-content">
+
+  <div class="tab-pane fade show active" id="tab-users">
+    <div class="d-flex justify-content-end mb-2">
+      <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#userModal" onclick="prepareUser()">
+        <i class="bi bi-plus-lg me-1"></i>{{ t "New account" }}
+      </button>
+    </div>
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead>
+            <tr><th class="ps-3">{{ t "Name" }}</th><th>{{ t "Email" }}</th><th>{{ t "Phone" }}</th><th class="text-center">{{ t "Role" }}</th>
+                <th class="text-center">{{ t "State" }}</th><th>{{ t "Last sign in" }}</th><th class="text-end pe-3"></th></tr>
+          </thead>
+          <tbody>
+            {{ range .Data.users }}
+            <tr>
+              <td class="ps-3 fw-medium">{{ .Fullname }}</td>
+              <td class="text-body-secondary">{{ .Email }}</td>
+              <td class="text-body-secondary small">{{ .Phone }}</td>
+              <td class="text-center">
+                {{ if .IsAdmin }}<span class="badge status-primary">{{ t "admin" }}</span>
+                {{ else }}<span class="badge status-secondary">{{ t "operator" }}</span>{{ end }}
+              </td>
+              <td class="text-center">
+                {{ if .Active }}<span class="badge status-success">{{ t "active" }}</span>
+                {{ else }}<span class="badge status-secondary">{{ t "inactive" }}</span>{{ end }}
+              </td>
+              <td class="small text-body-secondary">{{ if .LastLogin }}{{ ago .LastLogin }}{{ else }}{{ t "never" }}{{ end }}</td>
+              <td class="text-end pe-3 text-nowrap">
+                <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#userModal"
+                        onclick='prepareUser({{ json . }})'><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-sm btn-outline-danger"
+                        hx-post="/settings/users/{{ .ID }}/delete" hx-swap="none"
+                        hx-confirm="{{ t "Deactivate %s? Their sessions end immediately." .Email }}">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </td>
+            </tr>
+            {{ end }}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-pane fade" id="tab-roles">
+    <p class="small text-body-secondary">
+      {{ t "What each role may see of a run. Somebody who may know that a job failed does not necessarily get the response body it failed with: a job's answer often carries customer data, and the person watching the schedule is not always the person allowed to read it. A role is platform wide, so a change here applies to everyone holding it, on every project." }}
+    </p>
+
+    <div class="row g-3">
+      {{ range .Data.roles }}
+      <div class="col-12 col-lg-4">
+        <form class="card h-100" method="post" action="/settings/roles/run-visibility">
+          <div class="card-header">{{ .Name }}</div>
+          <div class="card-body">
+            <p class="small text-body-secondary">{{ .Description }}</p>
+            <input type="hidden" name="role" value="{{ .Key }}">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" role="switch" value="true"
+                     id="rv_{{ .Key }}_output" name="output" {{ if .View.Output }}checked{{ end }}>
+              <label class="form-check-label" for="rv_{{ .Key }}_output">{{ t "Response body" }}</label>
+            </div>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" role="switch" value="true"
+                     id="rv_{{ .Key }}_error" name="error" {{ if .View.Error }}checked{{ end }}>
+              <label class="form-check-label" for="rv_{{ .Key }}_error">{{ t "Error text" }}</label>
+            </div>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" role="switch" value="true"
+                     id="rv_{{ .Key }}_url" name="request_url" {{ if .View.RequestURL }}checked{{ end }}>
+              <label class="form-check-label" for="rv_{{ .Key }}_url">{{ t "Address called" }}</label>
+            </div>
+          </div>
+          <div class="card-footer">
+            <button class="btn btn-sm btn-primary w-100" type="submit">{{ t "Save" }}</button>
+          </div>
+        </form>
+      </div>
+      {{ end }}
+    </div>
+
+    <p class="small text-body-secondary mt-3 mb-0">
+      {{ t "Status, timing, HTTP code and which job ran stay visible to anybody who may read runs at all: without them the run list says nothing. Hiding the address does not redact it from the error text, because a transport error quotes the address it failed to reach; hide both if the address itself is sensitive. A change reaches the other instances within the permission cache window rather than instantly." }}
+    </p>
+  </div>
+
+  <div class="tab-pane fade" id="tab-notify">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <p class="small text-body-secondary mb-0">
+        {{ t "A recipient list is attached to a job and told which outcomes to report. Several jobs can share one list." }}
+      </p>
+      <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#notifyModal" onclick="prepareNotify()">
+        <i class="bi bi-plus-lg me-1"></i>{{ t "New list" }}
+      </button>
+    </div>
+    <div class="row g-3">
+      {{ range .Data.notifications }}
+      <div class="col-12 col-lg-6">
+        <div class="card h-100">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start">
+              <div>
+                <h2 class="h6 mb-1">{{ .Name }}
+                  {{ if not .Active }}<span class="badge status-secondary">{{ t "inactive" }}</span>{{ end }}
+                </h2>
+                <div class="small text-body-secondary">
+                  {{ t "reports" }} {{ if .OnFailure }}{{ t "failures" }}{{ end }}{{ if and .OnFailure .OnSuccess }} {{ t "and" }} {{ end }}{{ if .OnSuccess }}{{ t "successes" }}{{ end }}
+                </div>
+              </div>
+              <div class="btn-group btn-group-sm">
+                <button class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#notifyModal"
+                        onclick='prepareNotify({{ json . }})'><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-outline-danger"
+                        hx-post="/settings/notifications/{{ .ID }}/delete" hx-swap="none"
+                        hx-confirm="{{ t "Delete %s? Jobs using it keep running, without mail." .Name }}">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </div>
+            </div>
+            <div class="mt-2 small">
+              {{ range .Emails }}<span class="badge status-secondary me-1">{{ . }}</span>{{ end }}
+            </div>
+          </div>
+        </div>
+      </div>
+      {{ else }}
+      <div class="col-12">
+        <div class="card"><div class="card-body text-center text-body-secondary py-4">
+          No recipient list yet.
+        </div></div>
+      </div>
+      {{ end }}
+    </div>
+  </div>
+
+  {{/* Where a hostname is dialled.
+       Administrator only, which is the route group this whole screen sits in,
+       and never delegated to a project role: an arbitrary host-to-address map
+       can point a permitted host anywhere. */}}
+  <div class="tab-pane fade" id="tab-hosts">
+    <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+      <p class="small text-body-secondary mb-0" style="max-width: 60rem;">
+        {{ t "Send a host name straight to an address on this network, without changing the jobs that name it. The job still calls https://shop.example.com/cron/x; only the connection goes to the address below, while the Host header and the certificate check stay on the real name. Use it when public DNS sends a name out through a CDN to reach a service that is one hop away." }}
+      </p>
+      <button class="btn btn-sm btn-primary text-nowrap" data-bs-toggle="modal" data-bs-target="#hostModal" onclick="prepareHost()">
+        <i class="bi bi-plus-lg me-1"></i>{{ t "New route" }}
+      </button>
+    </div>
+
+    <div class="alert alert-warning d-flex gap-2 small">
+      <i class="bi bi-shield-exclamation mt-1"></i>
+      <div>{{ t "A route decides where credentials are sent. Anyone who can add one can point a trusted name at a machine of their choosing, so this is the platform administrator's screen alone and every change is written to the log." }}</div>
+    </div>
+
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead>
+            <tr>
+              <th class="ps-3">{{ t "Host name" }}</th>
+              <th>{{ t "Goes to" }}</th>
+              <th>{{ t "Port" }}</th>
+              <th>{{ t "Note" }}</th>
+              <th class="text-end pe-3"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ range .Data.hosts }}
+            <tr>
+              <td class="ps-3">
+                <span class="font-mono">{{ .Hostname }}</span>
+                {{ if not .Active }}<span class="badge status-secondary ms-1">{{ t "inactive" }}</span>{{ end }}
+              </td>
+              <td class="font-mono">{{ .Address }}</td>
+              <td class="text-body-secondary">
+                {{ if .Port }}{{ deref .Port }}{{ else }}{{ t "every port" }}{{ end }}
+              </td>
+              <td class="text-body-secondary small">{{ .Note }}</td>
+              <td class="text-end pe-3 text-nowrap">
+                <button class="btn btn-sm btn-outline-secondary"
+                        data-bs-toggle="modal" data-bs-target="#hostModal"
+                        onclick="prepareHost(this)"
+                        data-id="{{ .ID }}"
+                        data-hostname="{{ .Hostname }}"
+                        data-address="{{ .Address }}"
+                        data-port="{{ if .Port }}{{ deref .Port }}{{ end }}"
+                        data-note="{{ .Note }}"
+                        data-active="{{ .Active }}">
+                  <i class="bi bi-pencil"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-danger"
+                        hx-post="/settings/hosts/{{ .ID }}/delete"
+                        hx-confirm="{{ t "Remove this route? Jobs naming %s will go back to whatever public DNS answers." .Hostname }}"
+                        hx-swap="none">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </td>
+            </tr>
+            {{ else }}
+            {{ template "empty-row" dict "cols" 5 "message" (t "No routes. Host names resolve however DNS answers.") }}
+            {{ end }}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-pane fade" id="tab-logs">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <div class="btn-group btn-group-sm">
+        <a class="btn btn-outline-secondary {{ if eq .Data.level "" }}active{{ end }}" href="/settings">{{ t "All" }}</a>
+        <a class="btn btn-outline-secondary {{ if eq .Data.level "warn" }}active{{ end }}" href="/settings?level=warn">{{ t "Warnings" }}</a>
+        <a class="btn btn-outline-secondary {{ if eq .Data.level "error" }}active{{ end }}" href="/settings?level=error">{{ t "Errors" }}</a>
+      </div>
+      {{ if .Data.droppedLogs }}
+      <span class="badge status-warning">
+        {{ .Data.droppedLogs }} log line(s) dropped because the write queue was full
+      </span>
+      {{ end }}
+    </div>
+    <div class="card">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead><tr><th class="ps-3">{{ t "When" }}</th><th>{{ t "Level" }}</th><th>{{ t "Message" }}</th></tr></thead>
+          <tbody>
+            {{ range .Data.logs }}
+            <tr>
+              <td class="ps-3 small text-nowrap text-body-secondary">{{ datetime .CreatedAt }}</td>
+              <td>
+                <span class="badge {{ if eq .Level "error" }}status-danger{{ else if eq .Level "warn" }}status-warning{{ else }}status-secondary{{ end }}">{{ .Level }}</span>
+              </td>
+              <td class="small">
+                {{ .Message }}
+                {{ if .Detail }}<div class="text-body-secondary font-mono" style="font-size:.75rem">{{ truncate 400 .Detail }}</div>{{ end }}
+              </td>
+            </tr>
+            {{ else }}
+            {{ template "empty-row" dict "cols" 3 "message" (t "Nothing logged.") }}
+            {{ end }}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {{ template "pagination" dict "page" .Data.page "pages" .Data.pages "total" .Data.logTotal "base" "/settings" "query" (printf "level=%s" .Data.level) }}
+  </div>
+</div>
+
+<div class="modal fade" id="userModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <form class="modal-content" id="userForm" hx-post="/settings/users" hx-swap="none">
+      <div class="modal-header">
+        <h5 class="modal-title" id="userModalTitle">{{ t "New account" }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" name="id" id="u_id">
+        <div class="mb-3">
+          <label class="form-label" for="u_fullname">{{ t "Name" }}</label>
+          <input class="form-control" id="u_fullname" name="fullname" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="u_email">{{ t "Email" }}</label>
+          <input class="form-control" type="email" id="u_email" name="email" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="u_phone">{{ t "Phone" }}</label>
+          <input class="form-control" id="u_phone" name="phone">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="u_password">{{ t "Password" }}</label>
+          <input class="form-control" type="password" id="u_password" name="password" autocomplete="new-password">
+          <span class="form-hint" id="u_password_hint">{{ t "At least 10 characters." }}</span>
+        </div>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch" id="u_admin" name="is_admin" value="true">
+          <label class="form-check-label" for="u_admin">{{ t "Administrator" }}</label>
+          <div class="form-hint mt-0">{{ t "Administrators reach this screen and can change any account." }}</div>
+        </div>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch" id="u_active" name="active" value="true" checked>
+          <label class="form-check-label" for="u_active">{{ t "Active" }}</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{ t "Cancel" }}</button>
+        <button type="submit" class="btn btn-primary">{{ t "Save" }}</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal fade" id="notifyModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <form class="modal-content" id="notifyForm" hx-post="/settings/notifications" hx-swap="none">
+      <div class="modal-header">
+        <h5 class="modal-title" id="notifyModalTitle">{{ t "New list" }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" name="id" id="n_id">
+        <div class="mb-3">
+          <label class="form-label" for="n_name">{{ t "Name" }}</label>
+          <input class="form-control" id="n_name" name="name" required placeholder="{{ t "On-call, billing team" }}">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="n_emails">{{ t "Addresses" }}</label>
+          <textarea class="form-control" id="n_emails" name="emails" rows="3" placeholder="{{ t "one per line" }}"></textarea>
+        </div>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch" id="n_failure" name="on_failure" value="true" checked>
+          <label class="form-check-label" for="n_failure">{{ t "Report failures" }}</label>
+        </div>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch" id="n_success" name="on_success" value="true">
+          <label class="form-check-label" for="n_success">{{ t "Report successes" }}</label>
+          <div class="form-hint mt-0">{{ t "Rarely wanted. A job running every five minutes sends 288 messages a day." }}</div>
+        </div>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch" id="n_active" name="active" value="true" checked>
+          <label class="form-check-label" for="n_active">{{ t "Active" }}</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{ t "Cancel" }}</button>
+        <button type="submit" class="btn btn-primary">{{ t "Save" }}</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal fade" id="hostModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <form class="modal-content" id="hostForm" hx-post="/settings/hosts" hx-swap="none">
+      <div class="modal-header">
+        <h5 class="modal-title" id="hostModalTitle">{{ t "New route" }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" name="id" id="h_id">
+        <div class="mb-3">
+          <label class="form-label" for="h_hostname">{{ t "Host name" }}</label>
+          <input class="form-control font-mono" id="h_hostname" name="hostname" required
+                 placeholder="shop.example.com" autocomplete="off">
+          <span class="form-hint">{{ t "The name exactly as the jobs write it. No scheme, no port, no path, no wildcard." }}</span>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="h_address">{{ t "Goes to" }}</label>
+          <input class="form-control font-mono" id="h_address" name="address" required
+                 placeholder="10.10.0.5" autocomplete="off">
+          <span class="form-hint">{{ t "An IP address on this network. A host name here would mean another DNS lookup, which is what this avoids." }}</span>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="h_port">{{ t "Port" }}</label>
+          <input class="form-control" id="h_port" name="port" inputmode="numeric" placeholder="{{ t "every port" }}">
+          <span class="form-hint">{{ t "Leave empty for every port. A route naming a port wins over one that does not." }}</span>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="h_note">{{ t "Note" }}</label>
+          <input class="form-control" id="h_note" name="note" placeholder="{{ t "why this route exists" }}">
+        </div>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch" id="h_active" name="active" value="true" checked>
+          <label class="form-check-label" for="h_active">{{ t "Active" }}</label>
+          <div class="form-hint mt-0">{{ t "Switched off, the route is kept but not applied." }}</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{ t "Cancel" }}</button>
+        <button type="submit" class="btn btn-primary">{{ t "Save" }}</button>
+      </div>
+    </form>
+  </div>
+</div>
+{{ end }}
+
+{{ define "scripts" }}
+<script>
+  function prepareUser(user) {
+    var form = document.getElementById('userForm');
+    form.reset();
+    if (user) {
+      document.getElementById('userModalTitle').textContent = {{ t "Edit account" }};
+      document.getElementById('u_id').value = user.id;
+      document.getElementById('u_fullname').value = user.fullname || '';
+      document.getElementById('u_email').value = user.email || '';
+      document.getElementById('u_phone').value = user.phone || '';
+      document.getElementById('u_admin').checked = !!user.is_admin;
+      document.getElementById('u_active').checked = !!user.active;
+      /* An empty password field on an existing account means "leave it", never
+       * "clear it", so the hint has to say which. */
+      document.getElementById('u_password_hint').textContent = {{ t "Leave empty to keep the current password." }};
+    } else {
+      document.getElementById('userModalTitle').textContent = {{ t "New account" }};
+      document.getElementById('u_id').value = '';
+      document.getElementById('u_active').checked = true;
+      document.getElementById('u_password_hint').textContent = {{ t "At least 10 characters." }};
+    }
+  }
+
+  function prepareNotify(item) {
+    var form = document.getElementById('notifyForm');
+    form.reset();
+    if (item) {
+      document.getElementById('notifyModalTitle').textContent = {{ t "Edit list" }};
+      document.getElementById('n_id').value = item.id;
+      document.getElementById('n_name').value = item.name || '';
+      document.getElementById('n_emails').value = (item.emails || []).join('\n');
+      document.getElementById('n_failure').checked = !!item.on_failure;
+      document.getElementById('n_success').checked = !!item.on_success;
+      document.getElementById('n_active').checked = !!item.active;
+    } else {
+      document.getElementById('notifyModalTitle').textContent = {{ t "New list" }};
+      document.getElementById('n_id').value = '';
+      document.getElementById('n_failure').checked = true;
+      document.getElementById('n_active').checked = true;
+    }
+  }
+
+  /* Read off the button's data attributes rather than a JSON blob, because a
+     route is five short fields and the row already carries them. */
+  function prepareHost(button) {
+    var form = document.getElementById('hostForm');
+    form.reset();
+    if (button) {
+      document.getElementById('hostModalTitle').textContent = {{ t "Edit route" }};
+      document.getElementById('h_id').value = button.dataset.id;
+      document.getElementById('h_hostname').value = button.dataset.hostname || '';
+      document.getElementById('h_address').value = button.dataset.address || '';
+      document.getElementById('h_port').value = button.dataset.port || '';
+      document.getElementById('h_note').value = button.dataset.note || '';
+      document.getElementById('h_active').checked = button.dataset.active === 'true';
+    } else {
+      document.getElementById('hostModalTitle').textContent = {{ t "New route" }};
+      document.getElementById('h_id').value = '';
+      document.getElementById('h_active').checked = true;
+    }
+  }
+</script>
+{{ end }}

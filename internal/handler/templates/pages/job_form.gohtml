@@ -1,0 +1,564 @@
+{{ define "content" }}
+{{ $job := .Data.job }}
+{{ $detail := .Data.detail }}
+{{ $editing := ne $job.ID 0 }}
+{{ $action := "/jobs" }}{{ if $editing }}{{ $action = printf "/jobs/%d" $job.ID }}{{ end }}
+{{/* A reader opens the same page and gets it read-only: one template, so a
+     field added later cannot be editable on a screen nobody re-checked. */}}
+{{ $mayEdit := $.Can "jobs.update" }}{{ if not $editing }}{{ $mayEdit = $.Can "jobs.create" }}{{ end }}
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-4">
+  <div>
+    <div class="small text-body-secondary"><a href="/jobs">{{ t "Jobs" }}</a> /</div>
+    <h1 class="h4 mb-1">{{ if $editing }}{{ $job.Code }}{{ else }}{{ t "New job" }}{{ end }}</h1>
+    <p class="text-body-secondary small mb-0">
+      {{ if $editing }}
+        {{ t "Everything about this job lives on this page: what it calls, when, and what runs after it." }}
+      {{ else }}
+        {{ t "Fill this in once and the job is ready to run. Nothing else has to be created first." }}
+      {{ end }}
+    </p>
+  </div>
+  {{ if $editing }}
+  <div class="d-flex gap-2">
+    {{ if $.Can "jobs.run" }}
+    <form method="post" action="/jobs/{{ $job.ID }}/run" hx-post="/jobs/{{ $job.ID }}/run"
+          hx-confirm="{{ t "Run %s now?" $job.Code }}" hx-swap="none">
+      <button class="btn btn-outline-primary btn-sm"><i class="bi bi-play-fill me-1"></i>{{ t "Run now" }}</button>
+    </form>
+    {{ end }}
+    {{ if $.Can "runs.read" }}
+    <a class="btn btn-outline-secondary btn-sm" href="/runs?job_id={{ $job.ID }}">
+      <i class="bi bi-list-ul me-1"></i>{{ t "History" }}
+    </a>
+    {{ end }}
+    {{ if $.Can "jobs.create" }}
+    <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#cloneModal">
+      <i class="bi bi-files me-1"></i>{{ t "Duplicate" }}
+    </button>
+    {{ end }}
+    {{ if $.Can "jobs.delete" }}
+    <form method="post" action="/jobs/{{ $job.ID }}/delete" hx-post="/jobs/{{ $job.ID }}/delete"
+          hx-confirm="{{ t "Delete %s? Its run history is kept." $job.Code }}" hx-swap="none">
+      <button class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></button>
+    </form>
+    {{ end }}
+  </div>
+  {{ end }}
+</div>
+
+{{ with .Data.trend }}
+{{ if .Total }}
+<div class="card mb-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>{{ t "Recent behaviour" }}</span>
+    <span class="small text-body-secondary fw-normal">{{ t "last %d run(s)" .Total }}</span>
+  </div>
+  <div class="card-body">
+    <div class="row g-3 mb-3">
+      <div class="col-6 col-md-3">
+        <div class="section-title mb-1">{{ t "Succeeded" }}</div>
+        <div class="trend-figure {{ if lt .SuccessRate 90 }}text-danger{{ else }}text-success{{ end }}">
+          {{ .SuccessRate }}<span class="unit">%</span>
+        </div>
+        <div class="small text-body-secondary">
+          {{ t "%d ok" .Success }}
+          {{ if .Failed }}&middot; <span class="text-danger">{{ t "%d failed" .Failed }}</span>{{ end }}
+          {{ if .Timeout }}&middot; <span class="text-warning">{{ t "%d timeout" .Timeout }}</span>{{ end }}
+          {{ if .Skipped }}&middot; {{ t "%d skipped" .Skipped }}{{ end }}
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="section-title mb-1">{{ t "Average" }}</div>
+        <div class="trend-figure">{{ duration .AvgMs }}</div>
+        <div class="small text-body-secondary">{{ t "of the runs that finished" }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="section-title mb-1">{{ t "95th percentile" }}</div>
+        <div class="trend-figure">{{ duration .P95Ms }}</div>
+        <div class="small text-body-secondary">{{ t "the slow ones, not the worst one" }}</div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="section-title mb-1">{{ t "Slowest" }}</div>
+        <div class="trend-figure">{{ duration .MaxMs }}</div>
+        <div class="small text-body-secondary">
+          {{ if gt .MaxMs 0 }}{{ t "timeout is %ds" $job.TimeoutSec }}{{ else }}&mdash;{{ end }}
+        </div>
+      </div>
+    </div>
+    <div class="chart-box"><canvas id="jobTrendChart"></canvas></div>
+    <p class="form-hint mt-2 mb-0">
+      {{ t "Each bar is one run, oldest on the left, coloured by how it ended. A line that climbs towards the timeout is the warning that comes before the failures do." }}
+    </p>
+  </div>
+</div>
+<script id="jobTrendData" type="application/json">{{ json .Points }}</script>
+{{ end }}
+{{ end }}
+
+{{ if .Data.errors }}
+<div class="alert alert-danger">
+  <div class="fw-semibold mb-1">{{ t "This job was not saved:" }}</div>
+  <ul class="mb-0 small">
+    {{ range .Data.errors }}<li><strong>{{ .Field }}</strong> — {{ .Message }}</li>{{ end }}
+  </ul>
+</div>
+{{ end }}
+
+<form method="post" action="{{ $action }}">
+<div class="row g-3">
+
+  <div class="col-12 col-xl-8">
+
+    <div class="card mb-3">
+      <div class="card-header">{{ t "Identity" }}</div>
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-12 col-md-6">
+            <label class="form-label" for="project_id">{{ t "Project" }}</label>
+            <select class="form-select" id="project_id" name="project_id" required>
+              <option value="">{{ t "Choose a project" }}</option>
+              {{ range .Data.projects }}
+              <option value="{{ .ID }}" {{ if eq .ID $job.ProjectID }}selected{{ end }}>
+                {{ .Name }} ({{ .Slug }}){{ if not .Active }} — {{ t "inactive" }}{{ end }}
+              </option>
+              {{ end }}
+            </select>
+            <span class="form-hint">{{ t "A project with a base address confines its jobs to that host." }}</span>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label" for="jobName">{{ t "Name" }}</label>
+            <input class="form-control" id="jobName" name="name" value="{{ $job.Name }}" required maxlength="200">
+            <span class="form-hint">{{ t "What this job is for, in plain words." }}</span>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label" for="jobCode">{{ t "Code" }}</label>
+            <input class="form-control font-mono" id="jobCode" name="code" value="{{ $job.Code }}"
+                   {{ if $editing }}readonly{{ else }}required{{ end }} maxlength="64" pattern="[a-z0-9][a-z0-9_\-]{1,63}">
+            <span class="form-hint">
+              {{ if $editing }}{{ t "Fixed once created. History, chain links and alerts are keyed by it." }}
+              {{ else }}{{ t "Lower case, digits, dash and underscore. It cannot be changed later." }}{{ end }}
+            </span>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label" for="tag">{{ t "Tag" }}</label>
+            <input class="form-control" id="tag" name="tag" value="{{ $job.Tag }}" maxlength="60"
+                   list="tagOptions" placeholder="{{ t "reports, billing, cleanup" }}">
+            <datalist id="tagOptions">
+              {{ range .Data.tags }}<option value="{{ . }}">{{ end }}
+            </datalist>
+            <span class="form-hint">{{ t "Optional. Groups jobs inside a project for filtering." }}</span>
+          </div>
+          <div class="col-12">
+            <label class="form-label" for="description">{{ t "Description" }}</label>
+            <textarea class="form-control" id="description" name="description" rows="2">{{ $job.Description }}</textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header">{{ t "Target" }}</div>
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-4 col-md-2">
+            <label class="form-label" for="method">{{ t "Method" }}</label>
+            <select class="form-select" id="method" name="method">
+              {{ range $m := (list "GET" "POST" "PUT" "PATCH" "DELETE" "HEAD") }}
+              <option value="{{ $m }}" {{ if eq $m $job.Method }}selected{{ end }}>{{ $m }}</option>
+              {{ end }}
+            </select>
+          </div>
+          <div class="col-8 col-md-10">
+            <label class="form-label" for="url">{{ t "Address" }}</label>
+            <input class="form-control font-mono" id="url" name="url" value="{{ $job.URL }}" required
+                   placeholder="{{ t "/cron/daily-report or https://service.example.com/cron/daily-report" }}">
+            <span class="form-hint">
+              {{ t "A path when the project declares a base address, a full URL otherwise." }}
+              {{ if and $detail $detail.ResolvedURL }}
+                <br>{{ t "Currently resolves to" }} <code>{{ $detail.ResolvedURL }}</code>
+              {{ end }}
+            </span>
+          </div>
+          <div class="col-12">
+            <label class="form-label" for="body">{{ t "Request body" }}</label>
+            <textarea class="form-control font-mono" id="body" name="body" rows="3"
+                      placeholder="{{ t "Leave empty for GET" }}">{{ $job.Body }}</textarea>
+            <span class="form-hint">{{ t "Sent as-is. Content-Type defaults to application/json when a body is present." }}</span>
+          </div>
+        </div>
+
+        <hr class="my-4">
+
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="section-title mb-0">{{ t "Headers" }}</div>
+          <button class="btn btn-sm btn-outline-secondary" type="button" onclick="addHeaderRow()">
+            <i class="bi bi-plus-lg"></i> {{ t "Add header" }}
+          </button>
+        </div>
+        <div id="headerList">
+          {{ if $detail }}
+            {{ range $detail.Headers }}
+            <div class="row g-2 mb-2 header-row">
+              <div class="col-5"><input class="form-control form-control-sm font-mono" name="header_key[]" value="{{ .Key }}" placeholder="X-Api-Key"></div>
+              <div class="col-6"><input class="form-control form-control-sm font-mono" name="header_value[]" value="{{ .Value }}" placeholder="value"></div>
+              <div class="col-1 d-grid"><button class="btn btn-sm btn-outline-danger header-remove" type="button"><i class="bi bi-x-lg"></i></button></div>
+            </div>
+            {{ end }}
+          {{ end }}
+        </div>
+        <span class="form-hint">
+          {{ t "Header values are stored as written. Treat this as configuration, not a secret store." }}
+        </span>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>{{ t "Schedule" }}</span>
+        <button class="btn btn-sm btn-outline-secondary" type="button" onclick="addScheduleRow('')">
+          <i class="bi bi-plus-lg"></i> {{ t "Add schedule" }}
+        </button>
+      </div>
+      <div class="card-body">
+        <div class="d-flex flex-wrap gap-2 mb-3">
+          {{ range .Data.presets }}
+          <button type="button" class="preset-chip" data-expression="{{ .Expression }}">{{ .Label }}</button>
+          {{ end }}
+        </div>
+
+        <div id="scheduleList">
+          {{ $rows := 0 }}
+          {{ if $detail }}
+            {{ range $detail.Schedules }}
+            {{ $rows = add $rows 1 }}
+            <div class="schedule-row">
+              <div class="flex-grow-1">
+                <input class="form-control form-control-sm" name="schedules[]" value="{{ .Expression }}"
+                       placeholder="{{ t "minute hour day-of-month month day-of-week" }}">
+                <div class="preview-line">
+                  {{ .Description }}{{ if .NextRun }} — next: {{ datetime .NextRun }}{{ end }}
+                </div>
+              </div>
+              <button class="btn btn-sm btn-outline-danger schedule-remove" type="button"><i class="bi bi-x-lg"></i></button>
+            </div>
+            {{ end }}
+          {{ else if .Data.input }}
+            {{ range .Data.input.Schedules }}
+            {{ $rows = add $rows 1 }}
+            <div class="schedule-row">
+              <div class="flex-grow-1">
+                <input class="form-control form-control-sm" name="schedules[]" value="{{ . }}"
+                       placeholder="{{ t "minute hour day-of-month month day-of-week" }}">
+                <div class="preview-line"></div>
+              </div>
+              <button class="btn btn-sm btn-outline-danger schedule-remove" type="button"><i class="bi bi-x-lg"></i></button>
+            </div>
+            {{ end }}
+          {{ end }}
+          {{ if eq $rows 0 }}
+          <div class="schedule-row">
+            <div class="flex-grow-1">
+              <input class="form-control form-control-sm" name="schedules[]"
+                     placeholder="{{ t "minute hour day-of-month month day-of-week" }}">
+              <div class="preview-line"></div>
+            </div>
+            <button class="btn btn-sm btn-outline-danger schedule-remove" type="button"><i class="bi bi-x-lg"></i></button>
+          </div>
+          {{ end }}
+        </div>
+
+        <span class="form-hint">
+          Five fields, standard cron. Several schedules are allowed, because one expression cannot always say
+          what is meant. The line under each field shows when it will actually fire, which is the only moment a
+          mistyped expression is cheap to notice.
+        </span>
+      </div>
+    </div>
+
+    {{ if $editing }}
+    <div class="card mb-3">
+      <div class="card-header">{{ t "Run after this one" }}</div>
+      <div class="card-body">
+        <p class="text-body-secondary small">
+          {{ t "When this job finishes, the jobs below run without waiting for their own clock. A timeout triggers nothing: whether the target finished is unknown, and running a dependent job on half written data is worse than not running it. The delay exists because the triggering job's writes may not be committed the instant its response returns." }}
+        </p>
+
+        {{ range $detail.Links }}
+        <div class="d-flex align-items-center justify-content-between border rounded p-2 mb-2">
+          <div>
+            <a href="/jobs/{{ .TargetJobID }}" class="fw-medium">{{ .TargetCode }}</a>
+            <span class="text-body-secondary small">
+              {{ t "on %s, after %ds" .Condition .DelaySec }}
+            </span>
+            {{ if not .TargetActive }}
+            <span class="badge status-warning ms-1">{{ t "target inactive, does nothing" }}</span>
+            {{ end }}
+          </div>
+          {{ if $mayEdit }}
+          <button class="btn btn-sm btn-outline-danger" type="button"
+                  hx-post="/jobs/{{ $job.ID }}/links/{{ .ID }}/delete" hx-swap="none"
+                  hx-confirm="{{ t "Remove this link?" }}"><i class="bi bi-x-lg"></i></button>
+          {{ end }}
+        </div>
+        {{ else }}
+        <p class="text-body-secondary small fst-italic">{{ t "No linked job. Nothing is triggered when this finishes." }}</p>
+        {{ end }}
+
+        {{ if $mayEdit }}
+        <div class="row g-2 align-items-end mt-2">
+          <div class="col-12 col-md-5">
+            <label class="form-label small">{{ t "Job to trigger" }}</label>
+            <select class="form-select form-select-sm" id="linkTarget">
+              <option value="">{{ t "Choose a job" }}</option>
+              {{ range .Data.options }}
+              <option value="{{ .ID }}">{{ .ProjectSlug }} / {{ .Code }}{{ if not .Active }} — {{ t "inactive" }}{{ end }}</option>
+              {{ end }}
+            </select>
+          </div>
+          <div class="col-6 col-md-3">
+            <label class="form-label small">{{ t "When" }}</label>
+            <select class="form-select form-select-sm" id="linkCondition">
+              <option value="success">{{ t "it succeeds" }}</option>
+              <option value="failure">{{ t "it fails" }}</option>
+              <option value="always">{{ t "either way" }}</option>
+            </select>
+          </div>
+          <div class="col-4 col-md-2">
+            <label class="form-label small">{{ t "Delay (s)" }}</label>
+            <input class="form-control form-control-sm" type="number" id="linkDelay" value="15" min="0" max="3600">
+          </div>
+          <div class="col-2 d-grid">
+            <button class="btn btn-sm btn-outline-primary" type="button"
+                    hx-post="/jobs/{{ $job.ID }}/links"
+                    hx-include="#linkTarget, #linkCondition, #linkDelay"
+                    hx-vals='js:{target_job_id: document.getElementById("linkTarget").value, condition: document.getElementById("linkCondition").value, delay_sec: document.getElementById("linkDelay").value}'
+                    hx-swap="none">{{ t "Link" }}</button>
+          </div>
+        </div>
+        {{ end }}
+
+        {{ if $detail.Triggers }}
+        <hr class="my-3">
+        <div class="section-title">{{ t "This job is also triggered by" }}</div>
+        <div class="small">
+          {{ range $detail.Triggers }}
+          <a href="/jobs/{{ .JobID }}" class="badge status-secondary text-decoration-none me-1">{{ .SourceCode }}</a>
+          {{ end }}
+        </div>
+        {{ end }}
+      </div>
+    </div>
+    {{ end }}
+  </div>
+
+  <div class="col-12 col-xl-4">
+
+    <div class="card mb-3">
+      <div class="card-body">
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" role="switch" id="active" name="active" value="true"
+                 {{ if $job.Active }}checked{{ end }}{{ if not ($.Can "jobs.activate") }} disabled{{ end }}>
+          <label class="form-check-label fw-medium" for="active">{{ t "Active" }}</label>
+          <div class="form-hint mt-0">
+            {{ t "An inactive job is never queued, by schedule or by chain." }}
+            {{ if and $editing (not $detail.Schedules) }}
+              {{ if $detail.Triggers }}
+                <span class="text-info-emphasis">{{ t "This job has no schedule of its own; it runs when the jobs above trigger it." }}</span>
+              {{ else }}
+                <span class="text-warning-emphasis">{{ t "This job has no schedule and nothing chained into it, so it only runs when triggered by hand or through the API." }}</span>
+              {{ end }}
+            {{ end }}
+          </div>
+        </div>
+        {{ if $mayEdit }}
+        <button class="btn btn-primary w-100" type="submit">
+          <i class="bi bi-check-lg me-1"></i>{{ if $editing }}{{ t "Save changes" }}{{ else }}{{ t "Create job" }}{{ end }}
+        </button>
+        {{ else }}
+        <div class="alert alert-secondary small py-2 mb-0">
+          <i class="bi bi-eye me-1"></i>{{ t "Read only. Your access to this project does not include changing jobs." }}
+        </div>
+        {{ end }}
+        {{ if $editing }}
+        <a class="btn btn-link w-100 btn-sm mt-1 text-body-secondary" href="/jobs">{{ t "Back to the list" }}</a>
+        {{ end }}
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header">{{ t "Behaviour" }}</div>
+      <div class="card-body">
+        <div class="mb-3">
+          <label class="form-label" for="timeout_sec">{{ t "Timeout (seconds)" }}</label>
+          <input class="form-control form-control-sm" type="number" id="timeout_sec" name="timeout_sec"
+                 value="{{ $job.TimeoutSec }}" min="1" max="600">
+          <span class="form-hint">
+            {{ t "The client gives up after this. The target may well carry on, so the run is recorded as a timeout rather than a failure, and no chain step follows it." }}
+          </span>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label" for="max_duration_sec">{{ t "Maximum duration (seconds)" }}</label>
+          <input class="form-control form-control-sm" type="number" id="max_duration_sec" name="max_duration_sec"
+                 value="{{ $job.MaxDurationSec }}" min="1" max="86400">
+          <span class="form-hint">
+            {{ t "A run still marked running past this is treated as stuck and closed by the watchdog. Must exceed the timeout. Left at zero it is set to ten times the timeout." }}
+          </span>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label" for="retries">{{ t "Retries" }}</label>
+          <input class="form-control form-control-sm" type="number" id="retries" name="retries"
+                 value="{{ $job.Retries }}" min="0" max="5">
+          <span class="form-hint">
+            {{ t "Extra attempts after a failure, one second apart. A timeout is never retried." }}
+          </span>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label" for="priority">{{ t "Priority" }}</label>
+          <input class="form-control form-control-sm" type="number" id="priority" name="priority"
+                 value="{{ $job.Priority }}" min="1" max="1000">
+          <span class="form-hint">
+            {{ t "Lower goes first among the jobs falling on the same minute. Leave at 100 unless this one has to beat the others." }}
+          </span>
+        </div>
+
+        <div class="row g-2 mb-3">
+          <div class="col-6">
+            <label class="form-label" for="success_min">{{ t "Success from" }}</label>
+            <input class="form-control form-control-sm" type="number" id="success_min" name="success_min"
+                   value="{{ $job.SuccessMin }}" min="100" max="599">
+          </div>
+          <div class="col-6">
+            <label class="form-label" for="success_max">to</label>
+            <input class="form-control form-control-sm" type="number" id="success_max" name="success_max"
+                   value="{{ $job.SuccessMax }}" min="100" max="599">
+          </div>
+          <span class="form-hint">{{ t "HTTP status range that counts as success." }}</span>
+        </div>
+
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" role="switch" id="single_run" name="single_run" value="true"
+                 {{ if $job.SingleRun }}checked{{ end }}>
+          <label class="form-check-label" for="single_run">{{ t "One run at a time" }}</label>
+          <div class="form-hint mt-0">
+            {{ t "A new run is skipped while the previous one is still going. Leave on for anything that writes." }}
+          </div>
+        </div>
+
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" role="switch" id="run_missed" name="run_missed" value="true"
+                 {{ if $job.RunMissed }}checked{{ end }}>
+          <label class="form-check-label" for="run_missed">{{ t "Replay missed minutes" }}</label>
+          <div class="form-hint mt-0">
+            {{ t "If the scheduler was down, run the minutes it missed. Suits a job that runs once a day; not one that runs every five minutes." }}
+          </div>
+        </div>
+
+        <div>
+          <label class="form-label" for="max_delay_min">{{ t "Replay window (minutes)" }}</label>
+          <input class="form-control form-control-sm" type="number" id="max_delay_min" name="max_delay_min"
+                 value="{{ $job.MaxDelayMin }}" min="0" max="1440">
+          <span class="form-hint">{{ t "How far back a replay reaches. Older missed minutes are dropped." }}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header">{{ t "Notification" }}</div>
+      <div class="card-body">
+        <select class="form-select form-select-sm" name="notification_id">
+          <option value="">{{ t "No mail" }}</option>
+          {{ $nid := deref $job.NotificationID }}
+          {{ range .Data.notifications }}
+          <option value="{{ .ID }}" {{ if eq .ID $nid }}selected{{ end }}>
+            {{ .Name }} ({{ if .OnFailure }}failures{{ end }}{{ if and .OnFailure .OnSuccess }} and {{ end }}{{ if .OnSuccess }}successes{{ end }})
+          </option>
+          {{ end }}
+        </select>
+        <span class="form-hint">{{ t "Recipient lists are managed under Settings." }}</span>
+      </div>
+    </div>
+
+    {{ if and $editing $detail.Recent }}
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>{{ t "Recent runs" }}</span>
+        <a class="small" href="/runs?job_id={{ $job.ID }}">All</a>
+      </div>
+      <div class="list-group list-group-flush scroll-panel">
+        {{ range $detail.Recent }}
+        <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+           href="/runs/{{ .ID }}">
+          <span>{{ template "status-badge" .Status }}</span>
+          <span class="small text-body-secondary">
+            {{ if .DurationMs }}{{ duration .DurationMs }} &middot; {{ end }}{{ ago .CreatedAt }}
+          </span>
+        </a>
+        {{ end }}
+      </div>
+    </div>
+    {{ end }}
+  </div>
+</div>
+</form>
+
+<template id="scheduleRowTemplate">
+  <div class="schedule-row">
+    <div class="flex-grow-1">
+      <input class="form-control form-control-sm" name="schedules[]"
+             placeholder="{{ t "minute hour day-of-month month day-of-week" }}">
+      <div class="preview-line"></div>
+    </div>
+    <button class="btn btn-sm btn-outline-danger schedule-remove" type="button"><i class="bi bi-x-lg"></i></button>
+  </div>
+</template>
+
+<template id="headerRowTemplate">
+  <div class="row g-2 mb-2 header-row">
+    <div class="col-5"><input class="form-control form-control-sm font-mono" name="header_key[]" placeholder="X-Api-Key"></div>
+    <div class="col-6"><input class="form-control form-control-sm font-mono" name="header_value[]" placeholder="value"></div>
+    <div class="col-1 d-grid"><button class="btn btn-sm btn-outline-danger header-remove" type="button"><i class="bi bi-x-lg"></i></button></div>
+  </div>
+</template>
+
+{{ if and $editing ($.Can "jobs.create") }}
+<div class="modal fade" id="cloneModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">{{ t "Duplicate job" }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <label class="form-label" for="cloneCode">{{ t "Code for the copy" }}</label>
+        <input class="form-control font-mono" id="cloneCode" placeholder="{{ $job.Code }}-2">
+        <span class="form-hint">
+          The copy keeps the target, schedules and headers, and is created inactive so it does not start
+          firing alongside the original.
+        </span>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">{{ t "Cancel" }}</button>
+        <button class="btn btn-primary" type="button"
+                hx-post="/jobs/{{ $job.ID }}/clone"
+                hx-vals='js:{code: document.getElementById("cloneCode").value}'
+                hx-swap="none">{{ t "Duplicate" }}</button>
+      </div>
+    </div>
+  </div>
+</div>
+{{ end }}
+{{ end }}
+
+{{ define "schedule-preview" }}
+<div class="preview-line {{ if not .Valid }}invalid{{ end }}">
+  {{ if .Valid }}
+    {{ .Description }}{{ if .NextRuns }} — next: {{ range $i, $t := .NextRuns }}{{ if $i }}, {{ end }}{{ short $t }}{{ end }}{{ end }}
+  {{ else }}
+    {{ .Error }}
+  {{ end }}
+</div>
+{{ end }}

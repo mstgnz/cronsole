@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="{{ lang }}" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  {{/* The title is set in Go. Translating it here rather than there covers
+       every page at once, and a dynamic title (a job name, a run id) simply
+       falls back to itself. */}}
+  <title>{{ with .Title }}{{ t . }} &middot; {{ end }}Cronsole</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+{{ if .User }}
+<nav class="navbar navbar-expand-lg app-nav sticky-top">
+  <div class="container-fluid px-4">
+    <a class="navbar-brand d-flex align-items-center gap-2" href="/">
+      <i class="bi bi-clock-history"></i>
+      <span>Cronsole</span>
+    </a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" aria-label="{{ t "Menu" }}">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="nav">
+      <ul class="navbar-nav me-auto">
+        <li class="nav-item"><a class="nav-link {{ if eq .Active "dashboard" }}active{{ end }}" href="/">{{ t "Dashboard" }}</a></li>
+        {{ if .Can "jobs.read" }}
+        <li class="nav-item"><a class="nav-link {{ if eq .Active "jobs" }}active{{ end }}" href="/jobs">{{ t "Jobs" }}</a></li>
+        {{ end }}
+        {{ if .Can "runs.read" }}
+        <li class="nav-item"><a class="nav-link {{ if eq .Active "runs" }}active{{ end }}" href="/runs">{{ t "Runs" }}</a></li>
+        {{ end }}
+        {{ if .Can "projects.read" }}
+        <li class="nav-item"><a class="nav-link {{ if eq .Active "projects" }}active{{ end }}" href="/projects">{{ t "Projects" }}</a></li>
+        {{ end }}
+        {{ if .User.IsAdmin }}
+        <li class="nav-item"><a class="nav-link {{ if eq .Active "settings" }}active{{ end }}" href="/settings">{{ t "Settings" }}</a></li>
+        {{ end }}
+        {{/* The reference opens outside the console's layout, so it gets a new
+             tab rather than replacing the screen somebody was working on. */}}
+        <li class="nav-item"><a class="nav-link" href="/docs" target="_blank" rel="noopener">{{ t "API" }}</a></li>
+      </ul>
+      <div class="d-flex align-items-center gap-2">
+        {{ template "language-picker" $ }}
+        <button class="btn btn-sm btn-outline-secondary border-0" id="themeToggle" title="{{ t "Switch theme" }}" aria-label="{{ t "Switch theme" }}">
+          <i class="bi bi-circle-half"></i>
+        </button>
+        <div class="dropdown">
+          <a class="nav-link dropdown-toggle" role="button" data-bs-toggle="dropdown">{{ .User.Fullname }}</a>
+          <ul class="dropdown-menu dropdown-menu-end">
+            <li><a class="dropdown-item" href="/profile">{{ t "Profile" }}</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li>
+              <form method="post" action="/logout" class="px-1">
+                <button type="submit" class="dropdown-item">{{ t "Sign out" }}</button>
+              </form>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</nav>
+{{ end }}
+
+<main class="{{ if .User }}container-fluid px-4 py-4{{ else }}py-5{{ end }}">
+  {{ template "flash" .Flash }}
+  {{ block "content" . }}{{ end }}
+</main>
+
+{{ if .User }}
+<footer class="text-center small text-body-secondary py-4">
+  Cronsole {{ .Version }}
+</footer>
+{{ end }}
+
+<div class="toast-container position-fixed bottom-0 end-0 p-3" id="toasts"></div>
+
+{{/* Labels the charts need. Rendered here rather than duplicated in app.js so
+     a translation lives in exactly one place. */}}
+<script id="chartLabels" type="application/json">{{ json (dict
+  "success" (t "success") "failed" (t "failed")
+  "timeout" (t "timeout") "skipped" (t "skipped")
+  "duration" (t "Duration") "updated" (t "updated")
+  "confirm" (t "Confirm") "yesDoIt" (t "Yes, do it")
+  "requestFailed" (t "The request failed.")
+  "unreachable" (t "The service could not be reached.")) }}</script>
+
+{{/* One confirmation dialog for the whole interface. Every hx-confirm on every
+     screen is routed here by app.js, so the wording lives with the action and
+     the appearance lives in one place. */}}
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-sm-plus">
+    <div class="modal-content">
+      <div class="modal-body d-flex gap-3 p-4">
+        <div class="confirm-icon" id="confirmIcon"><i class="bi bi-question-lg"></i></div>
+        <div class="min-w-0">
+          <h2 class="h6 mb-1" id="confirmTitle">{{ t "Are you sure?" }}</h2>
+          <p class="small text-body-secondary mb-0" id="confirmMessage"></p>
+        </div>
+      </div>
+      <div class="modal-footer border-0 pt-0 px-4 pb-4">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">{{ t "Cancel" }}</button>
+        <button type="button" class="btn btn-sm btn-primary" id="confirmAccept">{{ t "Confirm" }}</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.10/dist/htmx.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
+<script src="/static/app.js"></script>
+{{ block "scripts" . }}{{ end }}
+</body>
+</html>

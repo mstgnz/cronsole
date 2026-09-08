@@ -1,0 +1,91 @@
+{{ define "content" }}
+{{ $run := .Data.run }}
+<div class="mb-4">
+  <div class="small text-body-secondary"><a href="/runs">{{ t "Runs" }}</a> /</div>
+  <h1 class="h4 mb-1">{{ $run.JobCode }} <span class="text-body-secondary fw-normal">{{ t "run %d" $run.ID }}</span></h1>
+  <p class="text-body-secondary small mb-0">{{ $run.ProjectName }}</p>
+</div>
+
+<div class="card">
+  {{ template "run-detail-body" .Data }}
+</div>
+{{ end }}
+
+{{ define "run-detail-body" }}
+{{ $run := .run }}
+<div class="card-body">
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+      <div class="section-title mb-1">{{ t "Status" }}</div>
+      {{ template "status-badge" $run.Status }}
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="section-title mb-1">{{ t "Duration" }}</div>
+      {{ if $run.DurationMs }}{{ duration $run.DurationMs }}{{ else }}&mdash;{{ end }}
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="section-title mb-1">HTTP</div>
+      {{ if $run.HTTPStatus }}{{ deref $run.HTTPStatus }}{{ else }}&mdash;{{ end }}
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="section-title mb-1">{{ t "Trigger" }}</div>
+      {{ t $run.Trigger }}
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4 small">
+    <div class="col-12 col-md-4">
+      <div class="section-title mb-1">{{ t "Planned" }}</div>
+      {{ if $run.PlannedMinute }}{{ datetime $run.PlannedMinute }}{{ else }}{{ t "not scheduled" }}{{ end }}
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="section-title mb-1">{{ t "Started" }}</div>
+      {{ if $run.StartedAt }}{{ datetime $run.StartedAt }}{{ else }}&mdash;{{ end }}
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="section-title mb-1">{{ t "Finished" }}</div>
+      {{ if $run.FinishedAt }}{{ datetime $run.FinishedAt }}{{ else }}&mdash;{{ end }}
+    </div>
+  </div>
+
+  {{ if $run.RequestURL }}
+  <div class="mb-3">
+    <div class="section-title">{{ t "Called" }}</div>
+    <code class="small">{{ $run.RequestURL }}</code>
+  </div>
+  {{ end }}
+
+  {{ if $run.Error }}
+  <div class="mb-3">
+    <div class="section-title">{{ t "Error" }}</div>
+    <pre class="output text-danger-emphasis">{{ $run.Error }}</pre>
+  </div>
+  {{ end }}
+
+  {{ if $run.Output }}
+  <div class="mb-3">
+    <div class="section-title">{{ t "Response" }}</div>
+    <pre class="output">{{ $run.Output }}</pre>
+  </div>
+  {{ end }}
+
+  {{ template "run-restricted" $.view }}
+
+  {{ if .children }}
+  <div class="mb-3">
+    <div class="section-title">{{ t "Runs this one triggered" }}</div>
+    <ul class="list-unstyled mb-0 small">
+      {{ range .children }}
+      <li class="mb-1">
+        {{ template "status-badge" .Status }}
+        <a href="/runs/{{ .ID }}" class="ms-1">{{ .JobCode }}</a>
+      </li>
+      {{ end }}
+    </ul>
+  </div>
+  {{ end }}
+
+  <a class="btn btn-sm btn-outline-secondary" href="/jobs/{{ $run.JobID }}">{{ t "Open the job" }}</a>
+  <a class="btn btn-sm btn-outline-secondary" href="/runs?job_id={{ $run.JobID }}">{{ t "This job's history" }}</a>
+</div>
+{{ end }}

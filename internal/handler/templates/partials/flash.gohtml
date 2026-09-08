@@ -1,0 +1,39 @@
+{{ define "flash" }}
+  {{ if . }}
+  <div class="container-fluid px-0 mb-3">
+    <div class="alert alert-{{ .Kind }} d-flex align-items-center gap-2 mb-0" role="alert">
+      <i class="bi {{ if eq .Kind "success" }}bi-check-circle{{ else if eq .Kind "danger" }}bi-exclamation-octagon{{ else if eq .Kind "warning" }}bi-exclamation-triangle{{ else }}bi-info-circle{{ end }}"></i>
+      <div>{{ .Message }}</div>
+    </div>
+  </div>
+  {{ end }}
+{{ end }}
+
+{{/* The status is a domain value, not prose: it comes out of the database as
+     "success" or "timeout" and is the same word in the API. Translating it for
+     display keeps the screen readable without renaming the thing itself. */}}
+{{ define "status-badge" }}
+  <span class="badge status-{{ statusClass . }}">{{ t . }}</span>
+{{ end }}
+
+{{ define "pagination" }}
+  {{ if gt .pages 1 }}
+  <nav class="d-flex justify-content-between align-items-center mt-3">
+    <span class="small text-body-secondary">{{ t "%d record(s), page %d of %d" .total .page .pages }}</span>
+    <ul class="pagination pagination-sm mb-0">
+      {{ $base := .base }}{{ $query := .query }}{{ $current := .page }}
+      {{ range pageRange .page .pages }}
+      <li class="page-item {{ if eq . $current }}active{{ end }}">
+        <a class="page-link" href="{{ $base }}?{{ $query }}&page={{ . }}">{{ . }}</a>
+      </li>
+      {{ end }}
+    </ul>
+  </nav>
+  {{ end }}
+{{ end }}
+
+{{ define "empty-row" }}
+  <tr><td colspan="{{ .cols }}" class="text-center text-body-secondary py-5">
+    <i class="bi bi-inbox fs-3 d-block mb-2 opacity-50"></i>{{ .message }}
+  </td></tr>
+{{ end }}

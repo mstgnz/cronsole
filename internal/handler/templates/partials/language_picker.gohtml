@@ -1,0 +1,33 @@
+{{/*
+  The interface language switcher.
+
+  A POST, so a prefetch or a crawler cannot change somebody's language and so it
+  passes the same origin check as every other state changing route. The current
+  path rides along in `next` and is sanitised server side, because an unchecked
+  return path would turn this into an open redirect.
+
+  Each language is named in its own words: a reader looking for Turkish is
+  looking for "Türkçe", not for "Turkish".
+*/}}
+{{ define "language-picker" }}
+<div class="dropdown">
+  <button class="btn btn-sm btn-outline-secondary border-0" data-bs-toggle="dropdown"
+          title="{{ t "Language" }}" aria-label="{{ t "Language" }}">
+    <i class="bi bi-translate"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    {{ $current := lang }}
+    {{ range languages }}
+    <li>
+      <form method="post" action="/lang">
+        <input type="hidden" name="lang" value="{{ . }}">
+        <input type="hidden" name="next" value="{{ $.Path }}">
+        <button type="submit" class="dropdown-item{{ if eq (printf "%s" .) $current }} active{{ end }}">
+          {{ langName . }}
+        </button>
+      </form>
+    </li>
+    {{ end }}
+  </ul>
+</div>
+{{ end }}

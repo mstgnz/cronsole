@@ -1,0 +1,51 @@
+{{ define "content" }}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-7">
+    <h1 class="h4 mb-4">Profile</h1>
+
+    <div class="card mb-3">
+      <div class="card-header">{{ t "Account" }}</div>
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-4 fw-normal text-body-secondary">{{ t "Name" }}</dt>
+          <dd class="col-8">{{ .User.Fullname }}</dd>
+          <dt class="col-4 fw-normal text-body-secondary">{{ t "Email" }}</dt>
+          <dd class="col-8">{{ .User.Email }}</dd>
+          <dt class="col-4 fw-normal text-body-secondary">{{ t "Role" }}</dt>
+          <dd class="col-8">{{ if .User.IsAdmin }}{{ t "Administrator" }}{{ else }}{{ t "Operator" }}{{ end }}</dd>
+          <dt class="col-4 fw-normal text-body-secondary">{{ t "Last sign in" }}</dt>
+          <dd class="col-8 mb-0">{{ if .User.LastLogin }}{{ datetime .User.LastLogin }}{{ else }}this is the first{{ end }}</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">{{ t "Change password" }}</div>
+      <div class="card-body">
+        <form method="post" action="/profile/password">
+          <div class="mb-3">
+            <label class="form-label" for="current_password">{{ t "Current password" }}</label>
+            <input class="form-control" type="password" id="current_password" name="current_password"
+                   required autocomplete="current-password">
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="new_password">{{ t "New password" }}</label>
+            <input class="form-control" type="password" id="new_password" name="new_password"
+                   required minlength="10" autocomplete="new-password">
+            <span class="form-hint">{{ t "At least 10 characters. Length matters more than punctuation." }}</span>
+          </div>
+          <div class="mb-4">
+            <label class="form-label" for="confirm_password">{{ t "Repeat the new password" }}</label>
+            <input class="form-control" type="password" id="confirm_password" name="confirm_password"
+                   required minlength="10" autocomplete="new-password">
+          </div>
+          <div class="alert alert-info small">
+            Changing the password signs out every session, including this one. You will be asked to sign in again.
+          </div>
+          <button class="btn btn-primary" type="submit">{{ t "Change password" }}</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{{ end }}

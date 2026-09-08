@@ -1,0 +1,79 @@
+{{/*
+  The machine the console is installed on.
+
+  Cronsole is installed on somebody's own VM rather than sold as a hosted
+  service, so on that box there is often no other console. A scheduler reporting
+  healthy jobs on a machine that is out of memory is reporting the past.
+
+  Only the platform administrator is given it: the host is not project data, and
+  the handler leaves the whole panel out for everybody else rather than
+  rendering it empty.
+
+  The badge saying host or container limit is load bearing. "80% of 512 MB
+  (container limit)" and "80% of 64 GB (host)" are different facts, and the
+  second is the one a pod reads out of /proc while it is about to be killed.
+*/}}
+{{ define "host-panel" }}
+<div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <span>
+      {{ t "Server" }}
+      <span class="badge status-secondary ms-1">
+        {{ if eq (printf "%s" .Source) "cgroup" }}{{ t "container limit" }}{{ else }}{{ t "host" }}{{ end }}
+      </span>
+    </span>
+    <span class="small text-body-secondary">
+      {{ t "up %s" (span .UptimeSec) }}
+      &middot;
+      {{/* The load average is always the machine's: /proc/loadavg reports the
+           host's even from inside a container, so it is labelled rather than
+           quietly presented as this container's. */}}
+      <span title="{{ t "1, 5 and 15 minute load average of the host" }}">
+        {{ t "load" }} {{ printf "%.2f" .Load1 }} · {{ printf "%.2f" .Load5 }} · {{ printf "%.2f" .Load15 }}
+      </span>
+    </span>
+  </div>
+  <div class="card-body">
+    <div class="row g-4">
+      <div class="col-12 col-md-4">
+        {{ template "usage-meter" dict
+          "label" (t "CPU")
+          "percent" .CPUPercent
+          "detail" (t "%s core(s) available" (printf "%g" .CPUCores)) }}
+      </div>
+      <div class="col-12 col-md-4">
+        {{ template "usage-meter" dict
+          "label" (t "Memory")
+          "percent" .MemPercent
+          "detail" (printf "%s / %s" (bytes .MemUsedBytes) (bytes .MemTotalBytes)) }}
+      </div>
+      <div class="col-12 col-md-4">
+        {{ template "usage-meter" dict
+          "label" (t "Disk")
+          "percent" .DiskPercent
+          "detail" (printf "%s / %s · %s" (bytes .DiskUsedBytes) (bytes .DiskTotalBytes) .DiskPath) }}
+      </div>
+    </div>
+  </div>
+</div>
+{{ end }}
+
+{{/* A negative percentage means the reading was not taken, not that it is zero.
+     It shows as a dash: a bar sitting at zero would say the machine is idle. */}}
+{{ define "usage-meter" }}
+<div class="d-flex justify-content-between align-items-baseline">
+  <span class="stat-label mb-0">{{ .label }}</span>
+  <span class="usage-figure">
+    {{ if lt .percent 0.0 }}&mdash;{{ else }}{{ printf "%.0f" .percent }}<span class="unit">%</span>{{ end }}
+  </span>
+</div>
+{{/* No aria-valuenow when the reading was not taken: that is what marks a
+     progressbar indeterminate, and announcing "0 percent" would tell a screen
+     reader user the machine is idle. */}}
+<div class="progress usage-bar my-1" role="progressbar" aria-label="{{ .label }}"
+     {{ if ge .percent 0.0 }}aria-valuenow="{{ printf "%.0f" .percent }}"{{ end }}
+     aria-valuemin="0" aria-valuemax="100">
+  <div class="progress-bar {{ usageClass .percent }}" style="width: {{ barWidth .percent }}"></div>
+</div>
+<div class="small text-body-secondary text-truncate">{{ .detail }}</div>
+{{ end }}

@@ -20,5 +20,14 @@
 # Go workspace file
 go.work
 .env
+.env.*
+!.env.example
+
+# built binary
+/cronsole
+/cronsolectl
+# Left over from the old name. Kept here so a stale build cannot be committed
+# by a `git add -A` before somebody notices it.
+/cronjob
 
 .DS_Store

@@ -1,0 +1,168 @@
+{{ define "content" }}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <div>
+    <h1 class="h4 mb-1 page-title">{{ t "Jobs" }}</h1>
+    <p class="text-body-secondary small mb-0">{{ t "Every scheduled job registered with this service." }}</p>
+  </div>
+  {{ if $.Can "jobs.create" }}
+  <a class="btn btn-primary" href="/jobs/new"><i class="bi bi-plus-lg me-1"></i>{{ t "New job" }}</a>
+  {{ end }}
+</div>
+
+<div class="card mb-3">
+  <div class="card-body py-3">
+    <form class="row g-2 align-items-end" method="get" action="/jobs"
+          hx-get="/jobs" hx-target="#jobTable" hx-select="#jobTable" hx-swap="outerHTML"
+          hx-trigger="submit, change from:select, keyup changed delay:400ms from:input[name='q']"
+          hx-push-url="true">
+      <div class="col-12 col-md-4">
+        <label class="form-label small">{{ t "Search" }}</label>
+        <input class="form-control form-control-sm" type="search" name="q" placeholder="{{ t "code, name, target" }}"
+               value="{{ qs .Data.filter "q" }}">
+      </div>
+      <div class="col-6 col-md-3">
+        <label class="form-label small">{{ t "Project" }}</label>
+        <select class="form-select form-select-sm" name="project_id">
+          <option value="">{{ t "All projects" }}</option>
+          {{ $sel := qs .Data.filter "project_id" }}
+          {{ range .Data.projects }}
+          <option value="{{ .ID }}" {{ if eq (printf "%d" .ID) $sel }}selected{{ end }}>{{ .Name }}</option>
+          {{ end }}
+        </select>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small">{{ t "Tag" }}</label>
+        <select class="form-select form-select-sm" name="tag">
+          <option value="">{{ t "All tags" }}</option>
+          {{ $tsel := qs .Data.filter "tag" }}
+          {{ range .Data.tags }}
+          <option value="{{ . }}" {{ if eq . $tsel }}selected{{ end }}>{{ . }}</option>
+          {{ end }}
+        </select>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label small">{{ t "State" }}</label>
+        <select class="form-select form-select-sm" name="active">
+          {{ $asel := qs .Data.filter "active" }}
+          <option value="">{{ t "All" }}</option>
+          <option value="true" {{ if eq $asel "true" }}selected{{ end }}>{{ t "Active" }}</option>
+          <option value="false" {{ if eq $asel "false" }}selected{{ end }}>{{ t "Inactive" }}</option>
+        </select>
+      </div>
+      <div class="col-6 col-md-1 d-grid">
+        <a class="btn btn-sm btn-outline-secondary" href="/jobs">{{ t "Reset" }}</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+{{ template "job-table" .Data }}
+{{ end }}
+
+{{ define "job-table" }}
+<div id="jobTable">
+  <div class="card">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead>
+          <tr>
+            <th class="ps-3">{{ t "Job" }}</th>
+            <th>{{ t "Project" }}</th>
+            <th>{{ t "Schedule" }}</th>
+            <th>{{ t "Next run" }}</th>
+            <th>{{ t "Last run" }}</th>
+            <th class="text-center">24h</th>
+            <th class="text-center">{{ t "State" }}</th>
+            <th class="text-end pe-3">{{ t "Actions" }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{ range .jobs }}
+          <tr data-row-href="/jobs/{{ .ID }}">
+            <td class="ps-3">
+              <a href="/jobs/{{ .ID }}" class="fw-medium">{{ .Code }}</a>
+              {{ if .SingleRun }}<i class="bi bi-lock-fill text-body-secondary ms-1 small" title="{{ t "One run at a time" }}"></i>{{ end }}
+              {{ if .RunMissed }}<i class="bi bi-arrow-counterclockwise text-body-secondary ms-1 small" title="{{ t "Replays missed minutes" }}"></i>{{ end }}
+              {{ if .LinkCount }}<i class="bi bi-diagram-3 text-info ms-1 small" title="{{ t "%d chain link(s)" .LinkCount }}"></i>{{ end }}
+              <div class="small text-body-secondary text-truncate" style="max-width: 22rem;">
+                {{ if .Name }}{{ .Name }}{{ end }}
+              </div>
+              <div class="small text-body-secondary font-mono text-truncate" style="max-width: 22rem;">
+                {{ .Method }} {{ .URL }}
+              </div>
+            </td>
+            <td>
+              <span class="badge {{ tint .ProjectSlug }}">{{ .ProjectSlug }}</span>
+              {{ if .Tag }}<div class="small text-body-secondary mt-1">{{ .Tag }}</div>{{ end }}
+            </td>
+            <td class="font-mono small">
+              {{ range .Schedules }}<div>{{ . }}</div>{{ end }}
+              {{ if .ChainOnly }}
+                <span class="badge status-info" title="{{ t "No schedule of its own. Another job triggers it." }}">{{ t "chain only" }}</span>
+              {{ else if .NeverRuns }}
+                <span class="badge status-danger" title="{{ t "Active, but nothing starts it: no schedule and no job chained into it. It can still be run by hand or through the API." }}">{{ t "never runs" }}</span>
+              {{ else if not .Schedules }}
+                <span class="text-body-secondary">{{ t "no schedule" }}</span>
+              {{ end }}
+            </td>
+            <td class="small text-nowrap">
+              {{ if .NextRun }}{{ short .NextRun }}<div class="text-body-secondary">{{ ago .NextRun }}</div>{{ else }}<span class="text-body-secondary">&mdash;</span>{{ end }}
+            </td>
+            <td class="small text-nowrap">
+              {{ if .LastRunAt }}
+                {{ template "status-badge" .LastStatus }}
+                <div class="text-body-secondary">{{ ago .LastRunAt }}{{ if .LastDurationMs }} &middot; {{ duration .LastDurationMs }}{{ end }}</div>
+              {{ else }}<span class="text-body-secondary">{{ t "never" }}</span>{{ end }}
+            </td>
+            <td class="text-center small text-nowrap">
+              <span class="text-success">{{ .DaySuccess }}</span>
+              <span class="text-body-secondary">/</span>
+              <span class="{{ if .DayFailed }}text-danger fw-medium{{ else }}text-body-secondary{{ end }}">{{ .DayFailed }}</span>
+              {{ if .DayTimeout }}<div class="text-warning" style="font-size:.75rem" title="{{ t "Part of the failures above. Raising the timeout may fix these." }}">{{ t "%d timeout" .DayTimeout }}</div>{{ end }}
+            </td>
+            <td class="text-center">
+              {{ if index $.can "jobs.activate" }}
+              <form method="post" action="/jobs/{{ .ID }}/toggle" hx-post="/jobs/{{ .ID }}/toggle" hx-swap="none">
+                <input type="hidden" name="active" value="{{ if .Active }}false{{ else }}true{{ end }}">
+                <button type="submit" class="btn btn-sm badge border-0 {{ if .Active }}status-success{{ else }}status-secondary{{ end }}">
+                  {{ if .Active }}{{ t "active" }}{{ else }}{{ t "inactive" }}{{ end }}
+                </button>
+              </form>
+              {{ else }}
+              <span class="badge {{ if .Active }}status-success{{ else }}status-secondary{{ end }}">
+                {{ if .Active }}{{ t "active" }}{{ else }}{{ t "inactive" }}{{ end }}
+              </span>
+              {{ end }}
+            </td>
+            <td class="text-end pe-3 text-nowrap">
+              {{ if index $.can "jobs.run" }}
+              <form method="post" action="/jobs/{{ .ID }}/run" class="d-inline"
+                    hx-post="/jobs/{{ .ID }}/run" hx-confirm="{{ t "Run %s now?" .Code }}" hx-swap="none">
+                <button class="btn btn-sm btn-outline-primary" title="{{ t "Run now" }}"><i class="bi bi-play-fill"></i></button>
+              </form>
+              {{ end }}
+              {{ if index $.can "runs.read" }}
+              <a class="btn btn-sm btn-outline-secondary" href="/runs?job_id={{ .ID }}" title="{{ t "Run history" }}"><i class="bi bi-list-ul"></i></a>
+              {{ end }}
+              <a class="btn btn-sm btn-outline-secondary" href="/jobs/{{ .ID }}"
+                 title="{{ if index $.can "jobs.update" }}{{ t "Edit" }}{{ else }}{{ t "Open" }}{{ end }}">
+                <i class="bi bi-{{ if index $.can "jobs.update" }}pencil{{ else }}eye{{ end }}"></i>
+              </a>
+              {{ if index $.can "jobs.delete" }}
+              <form method="post" action="/jobs/{{ .ID }}/delete" class="d-inline"
+                    hx-post="/jobs/{{ .ID }}/delete" hx-confirm="{{ t "Delete %s? Its run history is kept." .Code }}" hx-swap="none">
+                <button class="btn btn-sm btn-outline-danger" title="{{ t "Delete" }}"><i class="bi bi-trash"></i></button>
+              </form>
+              {{ end }}
+            </td>
+          </tr>
+          {{ else }}
+          {{ template "empty-row" dict "cols" 8 "message" (t "No job matches this filter.") }}
+          {{ end }}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {{ template "pagination" dict "page" .page "pages" .pages "total" .total "base" "/jobs" "query" .query }}
+</div>
+{{ end }}

@@ -1,15 +1,15 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cronjob-deployment
+  name: cronsole-deployment
   namespace: default
   labels:
-    app: cronjob
+    app: cronsole
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: cronjob
+      app: cronsole
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -18,11 +18,11 @@ spec:
   template:
     metadata:
       labels:
-        app: cronjob
+        app: cronsole
     spec:
       containers:
-        - name: cronjob
-          image: cronjob:latest
+        - name: cronsole
+          image: cronsole:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -33,22 +33,32 @@ spec:
             limits:
               cpu: "500m"
               memory: "512Mi"
+          # Liveness touches nothing but the process. A liveness probe that
+          # queried the database would restart every pod each time the database
+          # hiccups, turning a brief outage into a restart loop.
           livenessProbe:
             httpGet:
-              path: /health
+              path: /healthz
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
+          # Readiness does check the database, because a pod that cannot reach
+          # it cannot serve.
           readinessProbe:
             httpGet:
-              path: /ready
+              path: /readyz
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
           envFrom:
             - configMapRef:
-                name: cronjob-config
+                name: cronsole-config
             - secretRef:
-                name: cronjob-secret
+                name: cronsole-secret
+      # Long enough for the work queue to drain. A run cut off mid-flight
+      # leaves a row in running that nothing closes until the watchdog sweeps,
+      # and for a job marked single_run that means it does not execute again
+      # until then. The application's own budget is 90s; this sits above it.
+      terminationGracePeriodSeconds: 120
       imagePullSecrets:
         - name: regcred

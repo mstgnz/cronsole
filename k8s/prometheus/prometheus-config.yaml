@@ -10,17 +10,17 @@ data:
       evaluation_interval: 15s
 
     scrape_configs:
-      - job_name: 'cronjob-metrics'
+      - job_name: 'cronsole-metrics'
         kubernetes_sd_configs:
           - role: pod
         relabel_configs:
           - source_labels: [__meta_kubernetes_pod_label_app]
             action: keep
-            regex: cronjob
+            regex: cronsole
           - source_labels: [__meta_kubernetes_pod_container_port_number]
             action: keep
             regex: 8080
         metric_relabel_configs:
           - source_labels: [__name__]
-            regex: 'cronjob_.*'
+            regex: 'cronsole_.*'
             action: keep
