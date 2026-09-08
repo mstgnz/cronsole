@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -16,6 +18,8 @@ import (
 // AuthService owns accounts and sessions.
 type AuthService struct {
 	users  domain.UserRepository
+	resets domain.PasswordResetRepository
+	mail   ResetMailer
 	tokens *token.Issuer
 	grants GrantRevoker
 	log    *applog.Logger
@@ -30,9 +34,25 @@ type GrantRevoker interface {
 	RevokeUser(ctx context.Context, userID int64) error
 }
 
+// ResetMailer delivers a password reset link.
+//
+// Narrow, and an interface rather than the notifier itself, because this is the
+// only message account management sends and because a deployment with no mail
+// server configured must still start: the sender is allowed to be nil, and
+// then a reset simply cannot be requested.
+type ResetMailer interface {
+	PasswordReset(to, link string, expires time.Time)
+}
+
 // NewAuthService wires the service.
-func NewAuthService(users domain.UserRepository, tokens *token.Issuer, grants GrantRevoker, log *applog.Logger) *AuthService {
-	return &AuthService{users: users, tokens: tokens, grants: grants, log: log}
+//
+// resets and mail may be nil, which is what a test that does not exercise the
+// reset flow passes. RequestPasswordReset refuses rather than panicking.
+func NewAuthService(users domain.UserRepository, resets domain.PasswordResetRepository,
+	mail ResetMailer, tokens *token.Issuer, grants GrantRevoker, log *applog.Logger) *AuthService {
+
+	return &AuthService{users: users, resets: resets, mail: mail,
+		tokens: tokens, grants: grants, log: log}
 }
 
 // Login verifies credentials and issues a token.
@@ -138,6 +158,141 @@ func (s *AuthService) ResetPassword(ctx context.Context, userID int64, next stri
 		return err
 	}
 	return s.users.UpdatePassword(ctx, userID, auth.HashAndSalt(next), time.Now())
+}
+
+// ResetTokenTTL is how long a mailed link works.
+//
+// An hour, following OWASP: the link is a bearer credential for the account, and
+// the window in which it works is the window in which a forwarded mail, a shared
+// screen or a mail server's log is worth stealing. Long enough that somebody can
+// finish a coffee first.
+const ResetTokenTTL = time.Hour
+
+// ErrResetUnavailable means this deployment cannot send the mail, so there is no
+// point pretending a link was sent.
+var ErrResetUnavailable = errors.New("password reset is not available on this deployment")
+
+// ErrResetLinkInvalid covers unknown, expired, already used, and belonging to a
+// disabled account. One sentinel on purpose: telling those apart tells whoever
+// is guessing which half of the guess was right.
+var ErrResetLinkInvalid = errors.New("this link is no longer valid")
+
+// RequestPasswordReset mails a reset link, if there is an account to mail.
+//
+// It answers the same way whether or not the address is registered, and the
+// caller must render the same page either way. Anything else turns this form
+// into a way to ask "does this person have an account here", which for an
+// internal console is also "does this person work here".
+//
+// The mail goes onto the notifier's queue rather than an SMTP handshake on the
+// request, so a slow mail server cannot hold the form open or make the answer
+// take measurably longer for an address that exists.
+func (s *AuthService) RequestPasswordReset(ctx context.Context, email string) error {
+	if s.resets == nil || s.mail == nil {
+		return ErrResetUnavailable
+	}
+
+	email = strings.TrimSpace(strings.ToLower(email))
+	if email == "" {
+		return nil
+	}
+
+	user, err := s.users.GetByEmail(ctx, email)
+	switch {
+	case errors.Is(err, repository.ErrNotFound):
+		// No account. Logged so an operator can see the attempt, and answered
+		// exactly like the success case.
+		s.log.Warn("auth: password reset asked for an unknown address", email)
+		return nil
+	case err != nil:
+		return err
+	}
+	if !user.Active {
+		s.log.Warn("auth: password reset asked for a disabled account", email, "user_id", user.ID)
+		return nil
+	}
+
+	// 32 bytes, hex. The link is the credential, so it is generated here and
+	// stored only as a hash; nothing can read it back out of the database.
+	raw := auth.RandomHex(32)
+	expires := time.Now().Add(ResetTokenTTL)
+	if _, err := s.resets.Create(ctx, &domain.PasswordReset{
+		UserID:    user.ID,
+		TokenHash: hashResetToken(raw),
+		ExpiresAt: expires,
+	}); err != nil {
+		return err
+	}
+
+	s.mail.PasswordReset(user.Email, raw, expires)
+	s.log.Warn("auth: a password reset link was sent", user.Email, "user_id", user.ID)
+	return nil
+}
+
+// CompletePasswordReset spends a link and sets the new password.
+//
+// The password is validated BEFORE the link is spent, so somebody who types a
+// password the rules refuse does not also lose their only link and have to
+// start again from the mail.
+func (s *AuthService) CompletePasswordReset(ctx context.Context, rawToken, next string) error {
+	if s.resets == nil {
+		return ErrResetUnavailable
+	}
+	if strings.TrimSpace(rawToken) == "" {
+		return ErrResetLinkInvalid
+	}
+	if err := validatePassword(next); err != nil {
+		return err
+	}
+
+	reset, err := s.resets.FindByTokenHash(ctx, hashResetToken(rawToken))
+	switch {
+	case errors.Is(err, repository.ErrNotFound):
+		return ErrResetLinkInvalid
+	case err != nil:
+		return err
+	}
+	if !reset.Live(time.Now()) {
+		return ErrResetLinkInvalid
+	}
+
+	user, err := s.users.GetByID(ctx, reset.UserID)
+	switch {
+	case errors.Is(err, repository.ErrNotFound):
+		return ErrResetLinkInvalid
+	case err != nil:
+		return err
+	}
+	if !user.Active {
+		return ErrResetLinkInvalid
+	}
+
+	// The link is spent first. If the password write then fails the person
+	// asks for another mail, which is an inconvenience; the other order leaves
+	// a used link live, which is an account.
+	now := time.Now()
+	if err := s.resets.MarkUsed(ctx, reset.ID, now); err != nil {
+		return err
+	}
+	// UpdatePassword also moves tokens_valid_after, so every session opened
+	// before this moment stops working. That is the point of a reset: whoever
+	// was signed in with the old password is signed out.
+	if err := s.users.UpdatePassword(ctx, user.ID, auth.HashAndSalt(next), now); err != nil {
+		return err
+	}
+
+	s.log.Warn("auth: a password was reset through a mailed link", user.Email, "user_id", user.ID)
+	return nil
+}
+
+// hashResetToken is plain sha256, not bcrypt, and deliberately.
+//
+// The token is 32 random bytes rather than something a person chose, so there
+// is nothing to brute force and no reason to pay bcrypt's cost on a lookup that
+// has to be fast. Same reasoning as the project API keys.
+func hashResetToken(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
 }
 
 // UserInput is what an admin may set on an account. Password is separate: it

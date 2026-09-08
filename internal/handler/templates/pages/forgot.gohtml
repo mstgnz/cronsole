@@ -1,0 +1,54 @@
+{{/*
+  Ask for a reset link.
+
+  The page looks the same whether or not the address is registered, and it has
+  to: an internal console's account list is also a staff list.
+*/}}
+{{ define "content" }}
+<div class="container" style="max-width: 26rem;">
+  <div class="text-center mb-4">
+    <div class="brand-mark mx-auto mb-3"><i class="bi bi-clock-history"></i></div>
+    <h1 class="h4 mb-1">{{ t "Reset your password" }}</h1>
+    <p class="text-body-secondary small mb-0">
+      {{ t "Give the address you sign in with and we will send a link." }}
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="card-body p-4">
+      {{ if .Data.sent }}
+        <p class="small text-body-secondary mb-3">
+          {{ t "The link works once and expires in an hour. If nothing arrives, check the spam folder before asking again." }}
+        </p>
+        <a class="btn btn-outline-secondary w-100" href="/login">{{ t "Back to sign in" }}</a>
+      {{ else }}
+        <form method="post" action="/forgot">
+          <div class="mb-4">
+            <label class="form-label" for="email">{{ t "Email" }}</label>
+            <input class="form-control" type="email" id="email" name="email"
+                   value="{{ with .Data }}{{ .email }}{{ end }}" required autofocus autocomplete="username">
+          </div>
+          <button class="btn btn-primary w-100" type="submit">{{ t "Send the link" }}</button>
+        </form>
+        <div class="text-center mt-3">
+          <a class="small text-body-secondary" href="/login">{{ t "Back to sign in" }}</a>
+        </div>
+      {{ end }}
+    </div>
+  </div>
+
+  {{/* Same reason as the login screen: somebody locked out is exactly who
+       needs this in their own language. */}}
+  <div class="text-center mt-3">
+    {{ range languages }}
+    <form method="post" action="/lang" class="d-inline">
+      <input type="hidden" name="lang" value="{{ . }}">
+      <input type="hidden" name="next" value="{{ $.Path }}">
+      <button type="submit" class="btn btn-link btn-sm text-body-secondary{{ if eq (printf "%s" .) lang }} fw-semibold{{ end }}">
+        {{ langName . }}
+      </button>
+    </form>
+    {{ end }}
+  </div>
+</div>
+{{ end }}

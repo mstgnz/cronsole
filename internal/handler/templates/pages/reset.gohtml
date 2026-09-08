@@ -1,0 +1,48 @@
+{{/*
+  Choose a new password, from a mailed link.
+
+  The token is carried in a hidden field rather than left in the URL of the
+  submission, so it does not end up in a proxy log next to the password.
+*/}}
+{{ define "content" }}
+<div class="container" style="max-width: 26rem;">
+  <div class="text-center mb-4">
+    <div class="brand-mark mx-auto mb-3"><i class="bi bi-clock-history"></i></div>
+    <h1 class="h4 mb-1">{{ t "Choose a new password" }}</h1>
+  </div>
+
+  <div class="card">
+    <div class="card-body p-4">
+      {{ if .Data.expired }}
+        {{/* The link is gone, so re-offering the form would only produce the
+             same refusal. The way forward is another mail. */}}
+        <a class="btn btn-primary w-100" href="/forgot">{{ t "Ask for a new link" }}</a>
+      {{ else }}
+        <form method="post" action="/reset">
+          <input type="hidden" name="token" value="{{ .Data.token }}">
+          <div class="mb-3">
+            <label class="form-label" for="password">{{ t "New password" }}</label>
+            <input class="form-control" type="password" id="password" name="password"
+                   required autofocus autocomplete="new-password">
+            <span class="form-hint">{{ t "At least 10 characters." }}</span>
+          </div>
+          <div class="mb-4">
+            <label class="form-label" for="confirm_password">{{ t "Confirm password" }}</label>
+            <input class="form-control" type="password" id="confirm_password" name="confirm_password"
+                   required autocomplete="new-password">
+          </div>
+          <button class="btn btn-primary w-100" type="submit">{{ t "Set the password" }}</button>
+        </form>
+      {{ end }}
+
+      <div class="text-center mt-3">
+        <a class="small text-body-secondary" href="/login">{{ t "Back to sign in" }}</a>
+      </div>
+    </div>
+  </div>
+
+  <p class="text-center text-body-secondary small mt-3 mb-0">
+    {{ t "Setting a new password signs out every session this account had open." }}
+  </p>
+</div>
+{{ end }}

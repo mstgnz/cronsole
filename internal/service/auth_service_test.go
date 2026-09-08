@@ -146,9 +146,111 @@ func (m *memUserRepo) SoftDelete(_ context.Context, id int64, at time.Time) erro
 }
 
 func newTestAuthService() (*AuthService, *memUserRepo) {
+	svc, repo, _, _ := newTestAuthServiceWithResets()
+	return svc, repo
+}
+
+// newTestAuthServiceWithResets is the same service with the password reset
+// parts attached, for the tests that exercise the mailed link.
+func newTestAuthServiceWithResets() (*AuthService, *memUserRepo, *memResetRepo, *fakeResetMailer) {
 	repo := newUserRepo()
-	return NewAuthService(repo, token.NewIssuer("a-test-secret-long-enough-to-sign"),
-		&fakeGrants{}, testLogger()), repo
+	resets := &memResetRepo{rows: map[int64]*domain.PasswordReset{}}
+	mail := &fakeResetMailer{}
+	svc := NewAuthService(repo, resets, mail, token.NewIssuer("a-test-secret-long-enough-to-sign"),
+		&fakeGrants{}, testLogger())
+	return svc, repo, resets, mail
+}
+
+// memResetRepo is the reset table in memory.
+type memResetRepo struct {
+	mu     sync.Mutex
+	rows   map[int64]*domain.PasswordReset
+	nextID int64
+	// createErr makes the write fail, for the path where the link cannot be
+	// recorded and therefore must not be mailed.
+	createErr error
+}
+
+func (m *memResetRepo) Create(_ context.Context, r *domain.PasswordReset) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.createErr != nil {
+		return 0, m.createErr
+	}
+	m.nextID++
+	copied := *r
+	copied.ID = m.nextID
+	copied.CreatedAt = time.Now()
+	m.rows[copied.ID] = &copied
+	return copied.ID, nil
+}
+
+func (m *memResetRepo) FindByTokenHash(_ context.Context, hash string) (*domain.PasswordReset, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, r := range m.rows {
+		if r.TokenHash == hash {
+			copied := *r
+			return &copied, nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
+
+func (m *memResetRepo) MarkUsed(_ context.Context, id int64, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	target, ok := m.rows[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	for _, r := range m.rows {
+		if r.UserID == target.UserID && r.UsedAt == nil {
+			spent := at
+			r.UsedAt = &spent
+		}
+	}
+	return nil
+}
+
+func (m *memResetRepo) DeleteExpired(_ context.Context, before time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var n int64
+	for id, r := range m.rows {
+		if r.UsedAt != nil || r.ExpiresAt.Before(before) {
+			delete(m.rows, id)
+			n++
+		}
+	}
+	return n, nil
+}
+
+// fakeResetMailer records what would have been sent.
+type fakeResetMailer struct {
+	mu      sync.Mutex
+	to      string
+	token   string
+	expires time.Time
+	sends   int
+}
+
+func (f *fakeResetMailer) PasswordReset(to, rawToken string, expires time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.to, f.token, f.expires = to, rawToken, expires
+	f.sends++
+}
+
+func (f *fakeResetMailer) sent() (string, string, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.to, f.token, f.sends
 }
 
 func TestLoginAndAuthenticate(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,6 +49,7 @@ type harness struct {
 	authz  *authz.Service
 	issuer *token.Issuer
 	mw     *middleware.Set
+	mail   *recordingResetMailer
 	router http.Handler
 
 	// dispatched records what the runner would have been handed, so a manual
@@ -90,6 +92,31 @@ type repoSet struct {
 	stats         service.StatsStore
 	hosts         domain.HostOverrideRepository
 	logs          domain.AppLogRepository
+	resets        domain.PasswordResetRepository
+}
+
+// recordingResetMailer stands in for the notifier. It keeps the raw token,
+// which is the only place a test can get it: the database holds a hash, and
+// that is the point.
+type recordingResetMailer struct {
+	mu    sync.Mutex
+	to    string
+	token string
+	sends int
+}
+
+func (m *recordingResetMailer) PasswordReset(to, rawToken string, _ time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.to, m.token = to, rawToken
+	m.sends++
+}
+
+func (m *recordingResetMailer) last() (to, rawToken string, sends int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.to, m.token, m.sends
 }
 
 // newHarnessWith builds the stack, letting swap replace repositories first.
@@ -136,12 +163,14 @@ func newHarnessWith(t *testing.T, swap func(*repoSet)) *harness {
 		stats:         memrepo.Stats{Store: h.store},
 		hosts:         memrepo.Hosts{Store: h.store},
 		logs:          memrepo.Logs{Store: h.store},
+		resets:        memrepo.Resets{Store: h.store},
 	}
 	if swap != nil {
 		swap(&set)
 	}
 
-	authService := service.NewAuthService(set.users, h.issuer, h.grants, logger)
+	h.mail = &recordingResetMailer{}
+	authService := service.NewAuthService(set.users, set.resets, h.mail, h.issuer, h.grants, logger)
 	memberService := service.NewMemberService(authzService, set.users)
 	notificationService := service.NewNotificationService(set.notifications)
 	projectService := service.NewProjectService(set.projects, set.jobs, policy)
@@ -191,6 +220,19 @@ func (h *harness) admin(email string) (*domain.User, string) {
 	h.t.Helper()
 	user := h.store.AddUser(domain.User{
 		Fullname: "Administrator", Email: email, Active: true, IsAdmin: true,
+	})
+	return user, h.tokenFor(user.ID)
+}
+
+// adminWithPassword creates an administrator who can actually sign in. admin
+// leaves the password empty, which is fine for a test that carries a session
+// and useless for one that has to go through the login form.
+func (h *harness) adminWithPassword(email, password string) (*domain.User, string) {
+	h.t.Helper()
+
+	user := h.store.AddUser(domain.User{
+		Fullname: "Administrator", Email: email, Active: true, IsAdmin: true,
+		Password: auth.HashAndSalt(password),
 	})
 	return user, h.tokenFor(user.ID)
 }

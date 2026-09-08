@@ -113,12 +113,26 @@ func mount(r chi.Router, h Handlers, mw *middleware.Set, proxy auth.TrustedProxy
 	// Sign in. Rate limited by client address: without it the login form is an
 	// unlimited password oracle.
 	loginLimiter := auth.NewLimiter(10, 5*time.Minute)
+	// The reset routes get a limit of their own, and a tighter one. Each
+	// request sends mail to an address the caller named, so an unbounded form
+	// is a way to have this deployment post to somebody else's inbox.
+	resetLimiter := auth.NewLimiter(5, 15*time.Minute)
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Language)
 		r.Use(mw.GuestOnly)
 		r.Get("/login", h.Auth.LoginPage)
 		r.With(middleware.RateLimit(loginLimiter, proxy, "Too many attempts. Try again in a few minutes.")).
 			Post("/login", h.Auth.Login)
+
+		r.Get("/forgot", h.Auth.ForgotPage)
+		r.With(middleware.SameOrigin, middleware.RateLimit(resetLimiter, proxy,
+			"Too many attempts. Try again in a few minutes.")).
+			Post("/forgot", h.Auth.Forgot)
+
+		r.Get("/reset", h.Auth.ResetPage)
+		r.With(middleware.SameOrigin, middleware.RateLimit(resetLimiter, proxy,
+			"Too many attempts. Try again in a few minutes.")).
+			Post("/reset", h.Auth.Reset)
 	})
 
 	// The interface. Every route below requires a signed in operator, and

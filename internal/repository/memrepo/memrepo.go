@@ -44,9 +44,12 @@ type Store struct {
 	logs      []domain.AppLog
 	hosts     map[int64]*domain.HostOverride
 
+	resets map[int64]*domain.PasswordReset
+
 	nextUser, nextProject, nextJob  int64
 	nextSchedule, nextLink, nextRun int64
 	nextNotification, nextHost      int64
+	nextReset                       int64
 	deletedJobs, deletedProjects    map[int64]bool
 	deletedUsers, deletedNotifs     map[int64]bool
 }
@@ -63,6 +66,8 @@ func New() *Store {
 		runs:             map[int64]*domain.Run{},
 		notifs:           map[int64]*domain.Notification{},
 		hosts:            map[int64]*domain.HostOverride{},
+		resets:           map[int64]*domain.PasswordReset{},
+		nextReset:        1,
 		nextUser:         1,
 		nextProject:      1,
 		nextJob:          1,

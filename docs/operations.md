@@ -201,6 +201,26 @@ holds a long lock on the busiest table; a backlog drains over a few passes.
 Zero disables pruning. Both tables grow with every execution and nothing else
 deletes from them, so zero means forever.
 
+Password reset links are pruned by the same sweep and have no setting: a spent
+or expired one cannot be used again, and it is a credential hash tied to a
+person, so there is no reason to keep it.
+
+## Forgotten passwords
+
+`/forgot` mails a link, `/reset` spends it. What holds:
+
+- The link is 32 random bytes, stored **hashed**. The database never holds
+  anything that can be used to sign in.
+- It works **once** and expires in an hour. Using it also spends every other
+  outstanding link for that account, so an older mail cannot be replayed.
+- Setting the password ends every session the account had open, which is the
+  point when the account may already be in somebody else's hands.
+- The form answers identically for a registered address and an unknown one. On
+  an internal console the account list is also a staff list.
+- It needs `MAIL_HOST`, `MAIL_FROM` and `APP_URL`. Without them the screen says
+  reset is unavailable rather than promising a message nobody will receive, and
+  an administrator sets the password from Settings instead.
+
 ## Backup and restore
 
 Everything is in Postgres. `job_runs` is the largest table by far and the least

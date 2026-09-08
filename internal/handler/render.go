@@ -186,14 +186,20 @@ func (r *Renderer) funcs(lang i18n.Lang) template.FuncMap {
 		"lang":      func() string { return string(lang) },
 		"languages": func() []i18n.Lang { return i18n.Supported },
 		"langName":  func(l i18n.Lang) string { return i18n.Name[l] },
-		"datetime":  func(t any) string { return r.formatTime(t, "2006-01-02 15:04:05") },
-		"date":      func(t any) string { return r.formatTime(t, "2006-01-02") },
-		"clock":     func(t any) string { return r.formatTime(t, "15:04:05") },
-		"short":     func(t any) string { return r.formatTime(t, "02 Jan 15:04") },
-		"ago":       func(v any) string { return r.ago(lang, v) },
-		"duration":  humanDuration,
-		"bytes":     humanBytes,
-		"span":      func(seconds any) string { return humanSpanSeconds(seconds) },
+		// zone is the wall clock every cron expression is matched against and
+		// every time on screen is rendered in. The schedule form says it out
+		// loud: an expression is meaningless without knowing which clock reads
+		// it, and until this was shown the only way to find out was to wait for
+		// the job to fire at the wrong hour.
+		"zone":     func() string { return r.location.String() },
+		"datetime": func(t any) string { return r.formatTime(t, "2006-01-02 15:04:05") },
+		"date":     func(t any) string { return r.formatTime(t, "2006-01-02") },
+		"clock":    func(t any) string { return r.formatTime(t, "15:04:05") },
+		"short":    func(t any) string { return r.formatTime(t, "02 Jan 15:04") },
+		"ago":      func(v any) string { return r.ago(lang, v) },
+		"duration": humanDuration,
+		"bytes":    humanBytes,
+		"span":     func(seconds any) string { return humanSpanSeconds(seconds) },
 		// barWidth and usageClass draw a usage bar. Trusted CSS because this
 		// produces it: the value is clamped to a percentage here, so nothing
 		// from outside the process reaches a style attribute.

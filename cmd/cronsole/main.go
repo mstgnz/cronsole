@@ -158,6 +158,7 @@ func build(cfg *config.Config, db *sql.DB, logger *applog.Logger) (*app, error) 
 	statsRepo := repository.NewStatsRepo(store)
 	authzRepo := repository.NewAuthzRepo(store)
 	hostRepo := repository.NewHostOverrideRepo(store)
+	resetRepo := repository.NewPasswordResetRepo(store)
 
 	// --- authorization ---
 
@@ -193,7 +194,14 @@ func build(cfg *config.Config, db *sql.DB, logger *applog.Logger) (*app, error) 
 	sender := mailer.New(cfg.Mail)
 	notifier := service.NewNotifier(sender, logger, cfg.App.BaseURL)
 
-	authService := service.NewAuthService(userRepo, issuer, authzRepo, logger)
+	// The notifier is the reset mailer: it already owns the queue and the base
+	// URL a link needs. With no mail server configured, Configured() is false
+	// and the reset screens say so rather than promising a message.
+	var resetMailer service.ResetMailer
+	if cfg.Mail.Configured() {
+		resetMailer = notifier
+	}
+	authService := service.NewAuthService(userRepo, resetRepo, resetMailer, issuer, authzRepo, logger)
 	memberService := service.NewMemberService(authzService, userRepo)
 	notificationService := service.NewNotificationService(notifyRepo)
 	projectService := service.NewProjectService(projectRepo, jobRepo, policy)
@@ -306,7 +314,7 @@ func build(cfg *config.Config, db *sql.DB, logger *applog.Logger) (*app, error) 
 		FailureThreshold:  cfg.Watchdog.FailureThreshold,
 		AlertTo:           cfg.Watchdog.AlertTo,
 		AlertRepeat:       cfg.Watchdog.AlertRepeat,
-	})
+	}).WithPasswordResets(resetRepo)
 
 	// Built here and started in start, so building the graph has no side
 	// effects: a test can assemble the application without a dispatcher firing

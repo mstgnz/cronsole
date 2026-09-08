@@ -14,15 +14,87 @@ import (
 // Without these, a signature change lands as a confusing failure in whichever
 // test happens to construct the service first.
 var (
-	_ domain.UserRepository         = Users{}
-	_ domain.ProjectRepository      = Projects{}
-	_ domain.JobRepository          = Jobs{}
-	_ domain.RunRepository          = Runs{}
-	_ domain.NotificationRepository = Notifications{}
-	_ domain.AppLogRepository       = Logs{}
-	_ domain.StatsRepository        = Stats{}
-	_ domain.HostOverrideRepository = Hosts{}
+	_ domain.UserRepository          = Users{}
+	_ domain.ProjectRepository       = Projects{}
+	_ domain.JobRepository           = Jobs{}
+	_ domain.RunRepository           = Runs{}
+	_ domain.NotificationRepository  = Notifications{}
+	_ domain.AppLogRepository        = Logs{}
+	_ domain.StatsRepository         = Stats{}
+	_ domain.HostOverrideRepository  = Hosts{}
+	_ domain.PasswordResetRepository = Resets{}
 )
+
+// --- password resets --------------------------------------------------------
+
+// Resets is the outstanding reset links.
+type Resets struct{ *Store }
+
+func (r Resets) Create(_ context.Context, reset *domain.PasswordReset) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, existing := range r.resets {
+		if existing.TokenHash == reset.TokenHash {
+			return 0, repository.ErrDuplicate
+		}
+	}
+
+	id := r.nextReset
+	r.nextReset++
+	copied := *reset
+	copied.ID = id
+	if copied.CreatedAt.IsZero() {
+		copied.CreatedAt = time.Now()
+	}
+	r.resets[id] = &copied
+	return id, nil
+}
+
+func (r Resets) FindByTokenHash(_ context.Context, tokenHash string) (*domain.PasswordReset, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, reset := range r.resets {
+		if reset.TokenHash == tokenHash {
+			copied := *reset
+			return &copied, nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
+
+// MarkUsed spends every live link the account holds, exactly as the SQL does.
+func (r Resets) MarkUsed(_ context.Context, id int64, at time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	target, ok := r.resets[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	for _, reset := range r.resets {
+		if reset.UserID == target.UserID && reset.UsedAt == nil {
+			spent := at
+			reset.UsedAt = &spent
+		}
+	}
+	return nil
+}
+
+func (r Resets) DeleteExpired(_ context.Context, before time.Time) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var n int64
+	for id, reset := range r.resets {
+		if reset.UsedAt != nil || reset.ExpiresAt.Before(before) {
+			delete(r.resets, id)
+			n++
+		}
+	}
+	return n, nil
+}
 
 // --- users ------------------------------------------------------------------
 

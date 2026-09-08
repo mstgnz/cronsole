@@ -215,7 +215,15 @@
 
     <div class="card mb-3">
       <div class="card-header d-flex justify-content-between align-items-center">
-        <span>{{ t "Schedule" }}</span>
+        <span>
+          {{ t "Schedule" }}
+          {{/* The zone is part of what the expression means, so it belongs
+               beside the field rather than in a settings screen nobody opens
+               while typing one. */}}
+          <span class="badge text-body-secondary border ms-2 fw-normal">
+            <i class="bi bi-globe2"></i> {{ zone }}
+          </span>
+        </span>
         <button class="btn btn-sm btn-outline-secondary" type="button" onclick="addScheduleRow('')">
           <i class="bi bi-plus-lg"></i> {{ t "Add schedule" }}
         </button>
@@ -269,6 +277,7 @@
         </div>
 
         <span class="form-hint">
+          {{ t "Expressions are read in %s, this deployment's time zone." zone }}
           Five fields, standard cron. Several schedules are allowed, because one expression cannot always say
           what is meant. The line under each field shows when it will actually fire, which is the only moment a
           mistyped expression is cheap to notice.
@@ -556,7 +565,7 @@
 {{ define "schedule-preview" }}
 <div class="preview-line {{ if not .Valid }}invalid{{ end }}">
   {{ if .Valid }}
-    {{ .Description }}{{ if .NextRuns }} — next: {{ range $i, $t := .NextRuns }}{{ if $i }}, {{ end }}{{ short $t }}{{ end }}{{ end }}
+    {{ .Description }}{{ if .NextRuns }} — next: {{ range $i, $t := .NextRuns }}{{ if $i }}, {{ end }}{{ short $t }}{{ end }} · {{ zone }}{{ end }}
   {{ else }}
     {{ .Error }}
   {{ end }}

@@ -120,7 +120,7 @@ func fresh(t *testing.T) *Store {
 			notify_emails, notifications, projects,
 			grantz_user_permissions, grantz_user_roles, grantz_role_permissions,
 			grantz_roles, grantz_permissions,
-			host_overrides, app_logs, users
+			host_overrides, app_logs, password_resets, users
 		RESTART IDENTITY CASCADE`)
 	if err != nil {
 		t.Fatalf("could not empty the database: %v", err)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -121,6 +122,28 @@ func (n *Notifier) RunFinished(to []string, row *domain.RunTarget, result domain
 	}
 
 	n.enqueue(to, subject, b.String())
+}
+
+// PasswordReset mails a reset link.
+//
+// The link is built here because the notifier is the one place that knows the
+// address this deployment is reached at. A deployment with no APP_URL cannot
+// produce a link somebody can click, so it says so plainly rather than mailing
+// a path that goes nowhere.
+func (n *Notifier) PasswordReset(to, rawToken string, expires time.Time) {
+	if n.baseURL == "" {
+		n.log.Error("notifier: a reset link was requested with no APP_URL set",
+			"the message was not sent because the link would have no host", "to", to)
+		return
+	}
+
+	var b strings.Builder
+	b.WriteString("Somebody asked to reset the password for this account on Cronsole.\n\n")
+	fmt.Fprintf(&b, "%s/reset?token=%s\n\n", n.baseURL, url.QueryEscape(rawToken))
+	fmt.Fprintf(&b, "The link works once and expires at %s.\n\n", expires.Format("2006-01-02 15:04:05 MST"))
+	b.WriteString("If this was not you, nothing has changed and you can ignore this message.\n")
+
+	n.enqueue([]string{to}, "[cron] Reset your Cronsole password", b.String())
 }
 
 // Alert sends a watchdog warning.

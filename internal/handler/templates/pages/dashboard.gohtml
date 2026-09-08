@@ -56,6 +56,9 @@
         <div class="stat-label">{{ t "Clock drift" }}</div>
         <div class="stat-value">{{ $s.DriftSec }}<span class="unit">s</span></div>
         <div class="small text-body-secondary">{{ t "application against database" }}</div>
+        {{/* Beside the drift because the two answer one question together:
+             whose clock, and how far off it is. */}}
+        <div class="small text-body-secondary"><i class="bi bi-globe2"></i> {{ zone }}</div>
       </div>
     </div>
   </div>

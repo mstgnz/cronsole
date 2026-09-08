@@ -19,10 +19,22 @@ import (
 // nothing ever collected, and each of those is silent: the screens simply show
 // less activity, which looks like a quiet day.
 type Watchdog struct {
-	repo     domain.WatchdogRepository
+	repo domain.WatchdogRepository
+	// resets is pruned alongside the runs and the logs. It may be nil, which is
+	// what a deployment or a test without the reset flow passes.
+	resets   domain.PasswordResetRepository
 	notifier *Notifier
 	log      *applog.Logger
 	cfg      WatchdogConfig
+}
+
+// WithPasswordResets attaches the reset table to the sweep, so spent and
+// expired links do not accumulate forever. Set separately from the constructor
+// because it is the only optional part of the sweep and threading it through
+// every caller would make the common case read as though it were.
+func (w *Watchdog) WithPasswordResets(resets domain.PasswordResetRepository) *Watchdog {
+	w.resets = resets
+	return w
 }
 
 // WatchdogConfig are the sweep's thresholds.
@@ -55,6 +67,7 @@ type SweepResult struct {
 	DriftSec        int
 	PurgedRuns      int64
 	PurgedLogs      int64
+	PurgedResets    int64
 	FailingJobs     int
 	Warnings        []string
 	MailSent        bool
@@ -174,6 +187,16 @@ func (w *Watchdog) Sweep(ctx context.Context) (SweepResult, error) {
 			result.Warnings = append(result.Warnings, "application logs could not be pruned: "+err.Error())
 		} else {
 			result.PurgedLogs = n
+		}
+	}
+	// Reset links are pruned on their own clock rather than a retention
+	// setting: a spent or expired one is already useless, and it is a
+	// credential hash tied to a person, so there is no reason to keep it.
+	if w.resets != nil {
+		if n, err := w.resets.DeleteExpired(ctx, time.Now()); err != nil {
+			result.Warnings = append(result.Warnings, "reset links could not be pruned: "+err.Error())
+		} else {
+			result.PurgedResets = n
 		}
 	}
 

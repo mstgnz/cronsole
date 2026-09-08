@@ -106,6 +106,9 @@ Why the fifth second and not the minute boundary, and the rest of the design:
   and a dead dispatcher just looks like a quiet day.
 - **Prometheus metrics** at `/metrics`, every one written from a real call
   site.
+- **A password people can recover themselves**, by a mailed link that is stored
+  hashed, works once, expires in an hour, and ends every session the account had
+  open. The form says the same thing whether or not the address is registered.
 - **Per-project access**, scope based rather than a flag: six brands on one
   console, each team seeing only its own. Down to whether a reader sees the
   response body a job returned, which is often the part carrying customer data.

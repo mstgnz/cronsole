@@ -83,7 +83,9 @@ func newHarness(t *testing.T) *harness {
 	}
 
 	logger := applog.New()
-	authService := service.NewAuthService(stubUserRepo{users: h.users}, h.issuer, nil, logger)
+	// No reset repository and no mailer: these tests are about who a request
+	// belongs to, and a reset cannot be requested without a session anyway.
+	authService := service.NewAuthService(stubUserRepo{users: h.users}, nil, nil, h.issuer, nil, logger)
 	projectService := service.NewProjectService(stubProjectRepo{byPrefix: h.keys}, nil, service.TargetPolicy{})
 
 	h.set = New(authService, projectService, nil, logger, true)
