@@ -80,10 +80,25 @@ func TestTheProbesAndStyleSheetStayOutsideTheSetupGate(t *testing.T) {
 	// An orchestrator asking whether the process is alive must get an answer
 	// rather than a redirect to a form, and the setup screen is unreadable
 	// without its stylesheet.
-	for _, path := range []string{"/healthz", "/static/app.css", "/static/app.js"} {
+	for _, path := range []string{"/healthz", "/static/app.css", "/static/app.js", "/static/favicon.svg"} {
 		if w := h.get(path, ""); w.Code != http.StatusOK {
 			t.Errorf("GET %s answered %d before setup, want 200", path, w.Code)
 		}
+	}
+}
+
+func TestTheTabIconIsServedAsAnImage(t *testing.T) {
+	// The layout names this file, so a rename that misses one of the two ends
+	// as a 404 nobody notices: a missing favicon looks exactly like a browser
+	// that has not fetched it yet.
+	h := newFreshHarness(t)
+
+	w := h.get("/static/favicon.svg", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /static/favicon.svg answered %d", w.Code)
+	}
+	if got := w.Header().Get("Content-Type"); !strings.Contains(got, "image/svg+xml") {
+		t.Errorf("Content-Type = %q, want image/svg+xml", got)
 	}
 }
 
