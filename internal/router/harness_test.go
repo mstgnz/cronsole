@@ -197,7 +197,7 @@ func newHarnessWith(t *testing.T, swap func(*repoSet)) *harness {
 			auth.NewLimiter(10000, time.Minute), auth.TrustedProxy{}, logger),
 		Lang:      handler.NewLangHandler(false),
 		Docs:      handler.NewDocsHandler(),
-		Dashboard: handler.NewDashboardHandler(authzService, statsService, nil, renderer, logger),
+		Dashboard: handler.NewDashboardHandler(authzService, statsService, nil, nil, renderer, logger),
 		Jobs: handler.NewJobHandler(authzService, jobService, projectService, runService,
 			notificationService, statsService, renderer, logger),
 		Runs: handler.NewRunHandler(authzService, runService, projectService, renderer, time.UTC, logger),

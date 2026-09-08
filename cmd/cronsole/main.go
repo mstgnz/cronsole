@@ -27,6 +27,7 @@ import (
 	"github.com/mstgnz/cronsole/v2/internal/applog"
 	"github.com/mstgnz/cronsole/v2/internal/authz"
 	"github.com/mstgnz/cronsole/v2/internal/config"
+	"github.com/mstgnz/cronsole/v2/internal/dockerinfo"
 	"github.com/mstgnz/cronsole/v2/internal/domain"
 	"github.com/mstgnz/cronsole/v2/internal/handler"
 	"github.com/mstgnz/cronsole/v2/internal/hostinfo"
@@ -93,6 +94,9 @@ func main() {
 		// whatever recorded the screen.
 		"jwt_secret", config.Presence(cfg.JWTSecret),
 		"mail", cfg.Mail.Configured(),
+		// Whether the container panel is on, never the address: it is one an
+		// operator may have put credentials into.
+		"containers", cfg.Docker.Configured(),
 	)
 
 	application, err := build(cfg, db, logger)
@@ -129,9 +133,11 @@ type app struct {
 	runner    *service.Runner
 	notifier  *service.Notifier
 
-	// host samples the machine; hostOverrides keeps the dialer's routes
-	// current. Both run on timers started by start.
+	// host samples the machine; containers samples the Docker API when one is
+	// configured, and is nil when it is not; hostOverrides keeps the dialer's
+	// routes current. All three run on timers started by start.
 	host          *hostinfo.Reader
+	containers    *dockerinfo.Reader
 	hostOverrides *service.HostOverrideService
 
 	instanceID string
@@ -357,13 +363,22 @@ func build(cfg *config.Config, db *sql.DB, logger *applog.Logger) (*app, error) 
 	}
 	host := hostinfo.NewReader(workDir)
 
+	// What is running beside this service, when a read-only Docker API proxy
+	// has been configured. Nil otherwise, and the panel does not exist: the
+	// socket itself is never reached for, because holding it would make a flaw
+	// in this process a flaw in the whole machine. See internal/dockerinfo.
+	var containers *dockerinfo.Reader
+	if cfg.Docker.Configured() {
+		containers = dockerinfo.NewReader(cfg.Docker.API, cfg.Docker.Label)
+	}
+
 	handlers := router.Handlers{
 		Setup: handler.NewSetupHandler(authService, mw, renderer, logger),
 		Auth: handler.NewAuthHandler(authService, renderer, mw,
 			auth.NewLimiter(10, 5*time.Minute), trustedProxy, logger),
 		Lang:      handler.NewLangHandler(secureCookie),
 		Docs:      handler.NewDocsHandler(),
-		Dashboard: handler.NewDashboardHandler(authzService, statsService, host, renderer, logger),
+		Dashboard: handler.NewDashboardHandler(authzService, statsService, host, containers, renderer, logger),
 		Jobs: handler.NewJobHandler(authzService, jobService, projectService, runService,
 			notificationService, statsService, renderer, logger),
 		Runs: handler.NewRunHandler(authzService, runService, projectService, renderer,
@@ -409,6 +424,7 @@ func build(cfg *config.Config, db *sql.DB, logger *applog.Logger) (*app, error) 
 		runner:        runner,
 		notifier:      notifier,
 		host:          host,
+		containers:    containers,
 		hostOverrides: hostOverrides,
 		instanceID:    instanceID,
 	}, nil
@@ -428,6 +444,12 @@ func (a *app) start(ctx context.Context) {
 	// figure is current whenever somebody opens the dashboard, rather than
 	// blank on the first look and a thirty second average on the second.
 	a.host.Start(ctx, 5*time.Second)
+
+	// On its own timer for the same reason, and a slower one: the container
+	// list crosses a network boundary, and no request may wait on it.
+	if a.containers != nil {
+		a.containers.Start(ctx, 10*time.Second)
+	}
 
 	// A route saved here is applied immediately by the handler. This is how one
 	// saved on ANOTHER replica reaches this process, which never saw the

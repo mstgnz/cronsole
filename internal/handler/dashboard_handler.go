@@ -5,6 +5,7 @@ import (
 
 	"github.com/mstgnz/cronsole/v2/internal/applog"
 	"github.com/mstgnz/cronsole/v2/internal/authz"
+	"github.com/mstgnz/cronsole/v2/internal/dockerinfo"
 	"github.com/mstgnz/cronsole/v2/internal/hostinfo"
 	"github.com/mstgnz/cronsole/v2/internal/httpx"
 	"github.com/mstgnz/cronsole/v2/internal/service"
@@ -13,17 +14,23 @@ import (
 // DashboardHandler serves the front page.
 type DashboardHandler struct {
 	guard
-	stats  *service.StatsService
-	host   *hostinfo.Reader
-	render *Renderer
-	log    *applog.Logger
+	stats      *service.StatsService
+	host       *hostinfo.Reader
+	containers *dockerinfo.Reader
+	render     *Renderer
+	log        *applog.Logger
 }
 
 // NewDashboardHandler wires the handler.
 //
-// host may be nil, in which case the machine panel is simply absent.
-func NewDashboardHandler(a *authz.Service, stats *service.StatsService, host *hostinfo.Reader, render *Renderer, log *applog.Logger) *DashboardHandler {
-	return &DashboardHandler{guard: guard{authz: a}, stats: stats, host: host, render: render, log: log}
+// host and containers may both be nil, in which case their panels are simply
+// absent: the machine panel on a platform with nothing to read, the container
+// panel on a deployment that has not been given a Docker API to ask.
+func NewDashboardHandler(a *authz.Service, stats *service.StatsService, host *hostinfo.Reader,
+	containers *dockerinfo.Reader, render *Renderer, log *applog.Logger) *DashboardHandler {
+
+	return &DashboardHandler{guard: guard{authz: a}, stats: stats, host: host,
+		containers: containers, render: render, log: log}
 }
 
 // Show renders the dashboard.
@@ -59,17 +66,24 @@ func (h *DashboardHandler) Show(w http.ResponseWriter, r *http.Request) {
 		"can":   h.permissions(r),
 	}
 
-	// The machine the console is installed on, for whoever administers it.
+	// The machine the console is installed on, and what is running beside it,
+	// for whoever administers the box.
 	//
-	// Deliberately not scoped like everything else on this page: the host is
-	// not project data, and a team given a role on one project is not being
-	// given a view of the server's memory. Absent rather than empty where there
-	// is nothing to read, because a row of zeros reads as "all is well".
-	if h.host != nil {
-		if user := h.user(r); user != nil && user.IsAdmin {
+	// Deliberately not scoped like everything else on this page: neither is
+	// project data, and a team given a role on one project is not being given a
+	// view of the server's memory or the names of every container on it. Absent
+	// rather than empty where there is nothing to read, because a row of zeros
+	// reads as "all is well".
+	if user := h.user(r); user != nil && user.IsAdmin {
+		if h.host != nil {
 			if stats := h.host.Read(); stats.Supported {
 				data["host"] = stats
 			}
+		}
+		// Passed through even when the last sample failed: the panel says so.
+		// The reader is nil unless a Docker API was configured.
+		if h.containers != nil {
+			data["docker"] = h.containers.Read()
 		}
 	}
 

@@ -22,6 +22,7 @@ type Config struct {
 	Scheduler  Scheduler
 	Watchdog   Watchdog
 	Outbound   Outbound
+	Docker     Docker
 	JWTSecret  string
 	InstanceID string
 }
@@ -151,6 +152,30 @@ type Outbound struct {
 	AllowPrivateTargets bool
 }
 
+// Docker turns on the container panel, and is off unless an address is given.
+type Docker struct {
+	// API is the base address of a READ-ONLY Docker API proxy, empty by
+	// default.
+	//
+	// Deliberately an address and never the socket. Anything that can reach
+	// /var/run/docker.sock can start a privileged container and own the host,
+	// so a socket handed to a web service turns one remote flaw into the
+	// machine. A proxy that publishes the container list and nothing else costs
+	// this process no privilege at all. See internal/dockerinfo.
+	//
+	// Env-only for the same reason: a field on the settings screen would let
+	// an administrator account point the console somewhere new, where this
+	// takes access to the host.
+	API string
+	// Label filters the list through Docker's own filter, e.g.
+	// "cronsole.watch=true". Empty lists every container on the host.
+	Label string
+}
+
+// Configured reports whether the container panel has somewhere to read from.
+// The panel is absent when it does not.
+func (d Docker) Configured() bool { return d.API != "" }
+
 // Load reads the environment and validates it.
 //
 // Validation is fatal by design: a service that starts with a missing signing
@@ -209,6 +234,10 @@ func Load() (*Config, error) {
 			MaxBodyBytes:        int64(envInt("OUTBOUND_MAX_BODY_KB", 64)) * 1024,
 			AllowPrivateTargets: envBool("OUTBOUND_ALLOW_PRIVATE", true),
 		},
+		Docker: Docker{
+			API:   strings.TrimRight(env("DOCKER_API", ""), "/"),
+			Label: env("DOCKER_LABEL", ""),
+		},
 		JWTSecret: os.Getenv("JWT_SECRET"),
 	}
 
@@ -238,6 +267,15 @@ func (c *Config) validate() error {
 	if c.Scheduler.QueueSize < c.Scheduler.MaxConcurrent {
 		return fmt.Errorf("config: SCHEDULER_QUEUE_SIZE (%d) must be at least SCHEDULER_MAX_CONCURRENT (%d)",
 			c.Scheduler.QueueSize, c.Scheduler.MaxConcurrent)
+	}
+	// Refused rather than ignored, and http only. A "unix:///var/run/..." here
+	// would be somebody asking for the socket this feature exists to avoid, and
+	// a misspelled address would otherwise show as an empty panel, which reads
+	// as a host with no containers on it.
+	if api := c.Docker.API; api != "" &&
+		!strings.HasPrefix(api, "http://") && !strings.HasPrefix(api, "https://") {
+		return fmt.Errorf("config: DOCKER_API must be the http:// or https:// address of a "+
+			"read-only Docker API proxy, not %q", api)
 	}
 
 	if c.App.Production() {

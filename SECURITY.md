@@ -99,6 +99,14 @@ addition to the `SameSite` cookie. The JSON API requires
   into `job_runs.output` and is shown on the runs screen. If a target returns
   anything sensitive, that is where it ends up. Retention is
   `RUN_RETENTION_DAYS`.
+- **The container panel is off unless `DOCKER_API` is set**, and when it is on
+  it lists container names, images and states to platform administrators. What
+  it points at must be a read-only Docker API proxy: the socket itself is
+  root-equivalent on the host, and `:ro` on the mount makes the socket file
+  read-only, not the API behind it. Cronsole never holds it, issues only a GET
+  of the container list, and boot is refused for an address that is not
+  `http://` or `https://`. See
+  [docs/operations.md](docs/operations.md#the-container-panel).
 - **Rate limiting is per process.** With several replicas each has its own
   counters, so the effective limit is multiplied by the replica count. Adequate
   for slowing a guessing attack, not a quota.

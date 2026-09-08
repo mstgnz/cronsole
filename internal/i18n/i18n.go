@@ -61,6 +61,9 @@ var Dynamic = []string{
 	"pending", "running", "success", "failed", "timeout", "skipped",
 	// domain.Trigger*
 	"schedule", "manual", "chain", "api",
+	// Docker's own container states, rendered by the container panel. "running"
+	// is above, under the run statuses, and means the same thing here.
+	"created", "restarting", "paused", "exited", "removing", "dead",
 	// page titles that are not already navigation entries
 	"New job", "Members", "Error", "Set up Cronsole",
 	// relative times, formatted by the renderer's `ago` helper

@@ -15,6 +15,8 @@ internal/i18n        the interface in English and Turkish; the API is never tran
 internal/repository  the only package that speaks SQL
   .../memrepo        the same interfaces in memory, for tests that need the whole stack
 internal/service     the rules: dispatcher, runner, watchdog, and the CRUD services
+internal/hostinfo    the machine's own CPU, memory and disk, read from /proc and cgroups
+internal/dockerinfo  the containers beside it, through a read-only Docker API proxy
 internal/handler     HTTP in, HTTP out; holds no rule
 internal/middleware  who is calling, what they may reach, what gets recorded
 internal/router      the whole route table, in one file

@@ -1,0 +1,100 @@
+{{/*
+  What is running beside the console.
+
+  Only the platform administrator is given it, on the same terms as the machine
+  panel: this is not project data, and the names of every container on the box
+  are not something a role on one project buys.
+
+  The panel exists only where a read-only Docker API proxy was configured. The
+  socket is never held by this process, so there is nothing here to start, stop
+  or restart: those need write access to the Docker API, which is exactly what
+  the proxy is there to withhold.
+
+  A failed reading is stated, not hidden. An empty list would say the machine
+  has no containers, which is a different and much calmer fact than "the console
+  cannot see them".
+*/}}
+{{ define "docker-panel" }}
+<div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <span>{{ t "Containers" }}</span>
+    <span class="small text-body-secondary">
+      {{ if .Pending }}
+        {{ t "reading" }}
+      {{ else if .OKAt.IsZero }}
+        {{ t "unavailable" }}
+      {{ else }}
+        {{ t "%d of %d running" .Up .Total }} &middot; {{ ago .OKAt }}
+      {{ end }}
+    </span>
+  </div>
+
+  {{/* The error sits above the list rather than replacing it: the containers
+       from the last good reading are still the best answer available, and the
+       line says how old they are. */}}
+  {{ if .Err }}
+  <div class="card-body py-2 border-bottom">
+    <div class="small text-danger-emphasis">
+      {{ if .Stale }}
+        {{ t "The Docker API could not be read: %s. The list below is from %s." .Err (ago .OKAt) }}
+      {{ else }}
+        {{ t "The Docker API could not be read: %s" .Err }}
+      {{ end }}
+    </div>
+  </div>
+  {{ end }}
+
+  <div class="table-responsive scroll-panel">
+    <table class="table table-sm table-hover mb-0 align-middle">
+      <tbody>
+        {{ range .Visible }}
+        <tr>
+          <td class="ps-3">
+            <div class="fw-medium text-truncate">{{ .Name }}</div>
+            <div class="small text-body-secondary text-truncate" style="max-width: 28rem;">{{ .Image }}</div>
+          </td>
+          <td class="text-end pe-3 text-nowrap">
+            {{ template "container-badge" . }}
+            <div class="small text-body-secondary text-truncate">{{ .Status }}</div>
+          </td>
+        </tr>
+        {{ else }}
+          {{/* Only once a sample has actually come back with nothing. Before
+               the first one lands the truthful answer is "not yet", and the
+               header says that; claiming the host has no containers would be
+               a statement about the machine that has not been checked. */}}
+          {{ if and (not .Err) (not .Pending) }}
+          {{ template "empty-row" dict "cols" 2 "message" (t "No containers are on this host.") }}
+          {{ end }}
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+
+  {{ if .Hidden }}
+  <div class="card-body py-2 small text-body-secondary">
+    {{/* The list is sorted with whatever is wrong at the top, so the cut can
+         only ever hide containers that are running and healthy. */}}
+    {{ t "and %d more, all running" .Hidden }}
+  </div>
+  {{ end }}
+</div>
+{{ end }}
+
+{{/* State first, health second. A container can be up and failing its own
+     health check, and that reads as "running" everywhere else. No health check
+     at all is silence, never a green badge: the image declaring none is not
+     evidence that the thing inside it works. */}}
+{{ define "container-badge" }}
+{{ if eq .Health "unhealthy" }}
+  <span class="badge status-danger">{{ t "unhealthy" }}</span>
+{{ else if not .Running }}
+  <span class="badge status-warning">{{ t .State }}</span>
+{{ else if eq .Health "starting" }}
+  <span class="badge status-info">{{ t "starting" }}</span>
+{{ else if eq .Health "healthy" }}
+  <span class="badge status-success">{{ t "healthy" }}</span>
+{{ else }}
+  <span class="badge status-secondary">{{ t "running" }}</span>
+{{ end }}
+{{ end }}

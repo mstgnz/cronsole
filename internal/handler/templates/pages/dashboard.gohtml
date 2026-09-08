@@ -98,6 +98,10 @@
      get to render an empty version of it. */}}
 {{ with .host }}{{ template "host-panel" . }}{{ end }}
 
+{{/* Beneath the machine, and on the same terms: administrator only, and only
+     where a read-only Docker API proxy was configured. */}}
+{{ with .docker }}{{ template "docker-panel" . }}{{ end }}
+
 <div class="row g-3 mb-4">
   <div class="col-12 col-xl-8">
     <div class="card h-100">

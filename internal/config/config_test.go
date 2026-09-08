@@ -23,6 +23,7 @@ func validEnv(t *testing.T, overrides map[string]string) {
 		"RUN_RETENTION_DAYS", "LOG_RETENTION_DAYS", "WATCHDOG_FAILURE_THRESHOLD",
 		"WATCHDOG_ALERT_TO", "WATCHDOG_ALERT_REPEAT_MIN",
 		"OUTBOUND_USER_AGENT", "OUTBOUND_MAX_BODY_KB", "OUTBOUND_ALLOW_PRIVATE",
+		"DOCKER_API", "DOCKER_LABEL",
 		"JWT_SECRET", "TRUSTED_PROXY_HEADER", "TRUSTED_PROXY_HOPS",
 	} {
 		t.Setenv(key, "")
@@ -178,6 +179,59 @@ func TestAnUnknownTimeZoneIsRefused(t *testing.T) {
 	err := requireLoadError(t)
 	if !strings.Contains(err.Error(), "time zone") {
 		t.Errorf("err = %v, want it to mention the time zone", err)
+	}
+}
+
+func TestTheContainerPanelIsOffUntilItIsGivenAnAddress(t *testing.T) {
+	validEnv(t, nil)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load = %v", err)
+	}
+	if cfg.Docker.Configured() {
+		t.Error("the container panel is on without an address")
+	}
+}
+
+func TestOnlyAnHTTPDockerAddressIsAccepted(t *testing.T) {
+	// The socket is the thing this feature exists to avoid holding: reaching it
+	// is enough to start a privileged container and own the host. A misspelled
+	// address is refused for a duller reason, that an empty panel reads as a
+	// machine with no containers on it.
+	for _, api := range []string{
+		"unix:///var/run/docker.sock",
+		"/var/run/docker.sock",
+		"tcp://127.0.0.1:2375",
+		"docker-socket-proxy:2375",
+	} {
+		validEnv(t, map[string]string{"DOCKER_API": api})
+		err := requireLoadError(t)
+		if !strings.Contains(err.Error(), "DOCKER_API") {
+			t.Errorf("%q gave %v, want it to name DOCKER_API", api, err)
+		}
+	}
+}
+
+func TestADockerProxyAddressIsTakenAsGiven(t *testing.T) {
+	validEnv(t, map[string]string{
+		"DOCKER_API":   "http://docker-socket-proxy:2375/",
+		"DOCKER_LABEL": "cronsole.watch=true",
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load = %v", err)
+	}
+	if !cfg.Docker.Configured() {
+		t.Error("an address was given and the panel is still off")
+	}
+	// Trailing slash removed here rather than at every call site.
+	if cfg.Docker.API != "http://docker-socket-proxy:2375" {
+		t.Errorf("API = %q", cfg.Docker.API)
+	}
+	if cfg.Docker.Label != "cronsole.watch=true" {
+		t.Errorf("Label = %q", cfg.Docker.Label)
 	}
 }
 
