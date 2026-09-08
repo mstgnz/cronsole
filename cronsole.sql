@@ -199,7 +199,7 @@ COMMENT ON COLUMN jobs.max_duration_sec IS 'a run still marked running after thi
 COMMENT ON COLUMN jobs.single_run IS 'when true a new run is skipped while the previous one is still running.';
 COMMENT ON COLUMN jobs.run_missed IS 'when true, minutes the dispatcher was down for are replayed, up to max_delay_min.';
 COMMENT ON COLUMN jobs.priority IS 'lower goes first among jobs falling on the same minute.';
-COMMENT ON COLUMN jobs.active IS 'a job is created inactive; it cannot be activated until it has at least one schedule.';
+COMMENT ON COLUMN jobs.active IS 'whether the dispatcher considers this job at all. Having no schedule is not a bar: a job started only by a chain link or the API is a normal arrangement, so the job list warns about one that nothing can start rather than the schema refusing it.';
 
 CREATE UNIQUE INDEX IF NOT EXISTS jobs_project_code_key ON jobs (project_id, lower(code)) WHERE deleted_at IS NULL;
 -- The dispatcher's per-minute scan: every active job, in priority order.

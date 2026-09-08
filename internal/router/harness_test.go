@@ -15,6 +15,7 @@ import (
 
 	"github.com/mstgnz/cronsole/v2/internal/applog"
 	"github.com/mstgnz/cronsole/v2/internal/authz"
+	"github.com/mstgnz/cronsole/v2/internal/dockerinfo"
 	"github.com/mstgnz/cronsole/v2/internal/domain"
 	"github.com/mstgnz/cronsole/v2/internal/handler"
 	"github.com/mstgnz/cronsole/v2/internal/httpx"
@@ -119,9 +120,30 @@ func (m *recordingResetMailer) last() (to, rawToken string, sends int) {
 	return m.to, m.token, m.sends
 }
 
+// harnessOption tunes the stack before it is assembled. Variadic so the call
+// sites that want none are unchanged.
+type harnessOption func(*harnessConfig)
+
+type harnessConfig struct {
+	containers *dockerinfo.Reader
+}
+
+// withContainers gives the dashboard a container reader, which is what makes
+// the panel exist at all. The composition root leaves it nil unless a Docker
+// API was configured, so a test that wants to exercise who may see the panel
+// has to supply one.
+func withContainers(r *dockerinfo.Reader) harnessOption {
+	return func(c *harnessConfig) { c.containers = r }
+}
+
 // newHarnessWith builds the stack, letting swap replace repositories first.
-func newHarnessWith(t *testing.T, swap func(*repoSet)) *harness {
+func newHarnessWith(t *testing.T, swap func(*repoSet), opts ...harnessOption) *harness {
 	t.Helper()
+
+	var cfg harnessConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 
 	h := &harness{
 		t:      t,
@@ -197,7 +219,7 @@ func newHarnessWith(t *testing.T, swap func(*repoSet)) *harness {
 			auth.NewLimiter(10000, time.Minute), auth.TrustedProxy{}, logger),
 		Lang:      handler.NewLangHandler(false),
 		Docs:      handler.NewDocsHandler(),
-		Dashboard: handler.NewDashboardHandler(authzService, statsService, nil, nil, renderer, logger),
+		Dashboard: handler.NewDashboardHandler(authzService, statsService, nil, cfg.containers, renderer, logger),
 		Jobs: handler.NewJobHandler(authzService, jobService, projectService, runService,
 			notificationService, statsService, renderer, logger),
 		Runs: handler.NewRunHandler(authzService, runService, projectService, renderer, time.UTC, logger),

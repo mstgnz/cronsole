@@ -2,11 +2,13 @@ package router
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/mstgnz/cronsole/v2/internal/authz"
+	"github.com/mstgnz/cronsole/v2/internal/dockerinfo"
 	"github.com/mstgnz/cronsole/v2/internal/domain"
 )
 
@@ -585,5 +587,37 @@ func TestARestrictedRoleDoesNotSeeTheResponseBody(t *testing.T) {
 	}
 	if !bodyContains(w, "boom") {
 		t.Error("a restricted reader cannot see the error text they were granted")
+	}
+}
+
+// --- the machine and container panels ---------------------------------------
+
+func TestTheContainerPanelIsForThePlatformAdministratorAlone(t *testing.T) {
+	// The panel names every container on the box. A role over one project is a
+	// grant on that project's scheduled work, not a view of the server it runs
+	// on, so the handler leaves the whole panel out rather than emptying it.
+	docker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"Id":"abc","Names":["/payments-db"],"State":"running","Status":"Up 2 days"}]`))
+	}))
+	defer docker.Close()
+
+	h := newHarnessWith(t, nil, withContainers(dockerinfo.NewReader(docker.URL, "")))
+	h.mw.SetupCompleted()
+
+	shop, _ := h.project("shop", "https://shop.example.com")
+	_, admin := h.admin("admin@example.com")
+	_, reader := h.operatorWithRole("reader@example.com", authz.RoleProjectReader, shop.ID)
+
+	w := h.get("/", admin)
+	h.mustCode(w, http.StatusOK, "the dashboard")
+	if !bodyContains(w, "Containers") {
+		t.Error("the administrator was not given the container panel")
+	}
+
+	w = h.get("/", reader)
+	// The dashboard itself is theirs; only the panel is not.
+	h.mustCode(w, http.StatusOK, "the dashboard")
+	if bodyContains(w, "Containers") {
+		t.Error("a project reader was given the container panel")
 	}
 }
